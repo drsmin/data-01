@@ -1,8 +1,8 @@
 {
   "list":[
-    {"month" : "201904", "url" : ""},
-    {"month" : "201905", "url" : ""},
-    {"month" : "201906", "url" : ""},
-    {"month" : "201907", "url" : ""}
+    {"month" : "201904", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2019/201904.json"},
+    {"month" : "201905", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2019/201905.json"},
+    {"month" : "201906", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2019/201906.json"},
+    {"month" : "201907", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2019/201907.json"}
   ]
 }

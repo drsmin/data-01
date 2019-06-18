@@ -2,5 +2,6 @@
 {"name" : "amazon", "img" : "https://raw.githubusercontent.com/drsmin/data-01/master/my_address/amazon.png", "url" : "https://www.amazon.com/"},
 {"name" : "ebay", "img" : "https://raw.githubusercontent.com/drsmin/data-01/master/my_address/ebay.png", "url" : "https://www.ebay.com/"},
 {"name" : "coupang", "img" : "https://raw.githubusercontent.com/drsmin/data-01/master/my_address/coupang.png", "url" : "https://www.coupang.com/"},
-{"name" : "11st", "img" : "https://raw.githubusercontent.com/drsmin/data-01/master/my_address/11st.png", "url" : "http://www.11st.co.kr/"}
+{"name" : "11st", "img" : "https://raw.githubusercontent.com/drsmin/data-01/master/my_address/11st.png", "url" : "http://www.11st.co.kr/"},
+  {"name" : "CJ LOGISTICS", "img" : "https://raw.githubusercontent.com/drsmin/data-01/master/my_address/cjlogi.png", "url" : "https://www.cjlogistics.com"}
 ]

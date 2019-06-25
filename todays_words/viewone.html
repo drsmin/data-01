@@ -33,9 +33,9 @@ var json = getJSON("https://raw.githubusercontent.com/drsmin/data-01/master/toda
     //alert(pDay);
     //alert(JSON.stringify(data["list"][Number(pDay) - 1]["word"]));
 
+    document.getElementById("titleD").innerHTML = pDate.substr(0,4) + "-" + pDate.substr(4,2) + "-" + pDate.substr(6,2);
     document.getElementById("word").innerText = data["list"][Number(pDay) - 1]["word"];
     document.getElementById("photo").src = "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/img/" + pMonth + "/" + pDate + ".jpg";
-
 });
 
 
@@ -43,7 +43,7 @@ var json = getJSON("https://raw.githubusercontent.com/drsmin/data-01/master/toda
 </head>
 <body>
         <div class="jumbotron text-center">
-            <h1>오늘의 명언</h1>
+            <h1>오늘의 명언 <span id="titleD"></span></h1>
                 <img class="card-img-top" id="photo">
                 <div class="card-body">
                   <h2><p class="card-text" id="word"></p></h2>

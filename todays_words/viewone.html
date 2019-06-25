@@ -1,0 +1,53 @@
+<html>
+<head>
+    <title>오늘의 명언</title>
+        <link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/4.0.0/css/bootstrap.min.css" integrity="sha384-Gn5384xqQ1aoWXA+058RXPxPg6fy4IWvTNh0E263XmFcJlSAwiGgFAW/dAiS6JXm" crossorigin="anonymous">
+    <script type="text/javascript">
+var getParameter = function (param) { var returnValue; var url = location.href; var parameters = (url.slice(url.indexOf('?') + 1, url.length)).split('&'); for (var i = 0; i < parameters.length; i++) { var varName = parameters[i].split('=')[0]; if (varName.toUpperCase() == param.toUpperCase()) { returnValue = parameters[i].split('=')[1]; return decodeURIComponent(returnValue); } } };
+
+var getJSON = function(url, callback) {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', url, true);
+    xhr.responseType = 'json';
+    xhr.onload = function() {
+      var status = xhr.status;
+      if (status === 200) {
+        callback(null, xhr.response);
+      } else {
+        callback(status, xhr.response);
+      }
+    };
+    xhr.send();
+};
+
+    var pDate = getParameter("d");
+    var pYear = pDate.substr(0, 4);
+    var pMonth = pDate.substr(0, 6);
+    var pDay = pDate.substr(6, 2);
+
+
+
+var json = getJSON("https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/"+ pYear +"/"+ pMonth +".json", function (status, data) {
+
+    
+    //alert(pDay);
+    //alert(JSON.stringify(data["list"][Number(pDay) - 1]["word"]));
+
+    document.getElementById("word").innerText = data["list"][Number(pDay) - 1]["word"];
+    document.getElementById("photo").src = "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/img/" + pMonth + "/" + pDate + ".jpg";
+
+});
+
+
+    </script>
+</head>
+<body>
+        <div class="card text-center">
+                <img class="card-img-top" id="photo">
+                <div class="card-body">
+                  <p class="card-text" id="word"></p>
+                </div>
+              </div>
+
+</body>
+</html>

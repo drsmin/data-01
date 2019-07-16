@@ -114,6 +114,10 @@ body {
 .mastfoot {
   color: rgba(255, 255, 255, .5);
 }
+
+img#photo {
+  max-width: 500px;
+}
     </style>
     <script type="text/javascript">
 var getParameter = function (param) { var returnValue; var url = location.href; var parameters = (url.slice(url.indexOf('?') + 1, url.length)).split('&'); for (var i = 0; i < parameters.length; i++) { var varName = parameters[i].split('=')[0]; if (varName.toUpperCase() == param.toUpperCase()) { returnValue = parameters[i].split('=')[1]; return decodeURIComponent(returnValue); } } };
@@ -157,20 +161,20 @@ var json = getJSON("https://raw.githubusercontent.com/drsmin/data-01/master/toda
 
 <body class="text-center">
 
-        <div class="cover-container d-flex h-100 p-3 mx-auto flex-column">
-    
-          <main role="main" class="inner cover">
-            <h1 class="cover-heading">오늘의 명언</h1>
-            <p class="lead" id="titleD"></p>
-            <img id="photo" />
-            <p class="lead" id="word"></p>
-          </main>
-    
-          <footer class="mastfoot mt-auto">
-            <div class="inner">
-              <p><a href='https://play.google.com/store/apps/details?id=kr.pe.drs.todays_words&pcampaignid=MKT-Other-global-all-co-prtnr-py-PartBadge-Mar2515-1'><img alt='다운로드하기 Google Play' src='https://play.google.com/intl/en_us/badges/images/generic/ko_badge_web_generic.png'/></a></a></p>
-            </div>
-          </footer>
-        </div>
+  <div class="cover-container d-flex h-100 p-3 mx-auto flex-column">
+
+    <main role="main" class="inner cover">
+      <h1 class="cover-heading">오늘의 명언</h1>
+      <p class="lead" id="titleD"></p>
+      <img id="photo" class="lead" />
+      <p class="lead" id="word"></p>
+    </main>
+
+    <footer class="mastfoot mt-auto">
+      <div class="inner">
+        <p><a href='https://play.google.com/store/apps/details?id=kr.pe.drs.todays_words&pcampaignid=MKT-Other-global-all-co-prtnr-py-PartBadge-Mar2515-1'><img alt='다운로드하기 Google Play' src='https://play.google.com/intl/en_us/badges/images/generic/ko_badge_web_generic.png'/></a></a></p>
+      </div>
+    </footer>
+  </div>
 </body>
 </html>

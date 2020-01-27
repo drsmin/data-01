@@ -8,6 +8,17 @@
     {"month" : "201909", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2019/201909.json"},
     {"month" : "201910", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2019/201910.json"},
     {"month" : "201911", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2019/201911.json"},
-    {"month" : "201912", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2019/201912.json"}
+    {"month" : "202001", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2020/202001.json"},
+    {"month" : "202002", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2020/202002.json"},
+    {"month" : "202003", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2020/202003.json"},
+    {"month" : "202004", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2020/202004.json"},
+    {"month" : "202005", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2020/202005.json"},
+    {"month" : "202006", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2020/202006.json"},
+    {"month" : "202007", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2020/202007.json"},
+    {"month" : "202008", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2020/202008.json"},
+    {"month" : "202009", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2020/202009.json"},
+    {"month" : "202010", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2020/202010.json"},
+    {"month" : "202011", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2020/202011.json"},
+    {"month" : "202012", "url" : "https://raw.githubusercontent.com/drsmin/data-01/master/todays_words/2020/202012.json"}
   ]
 }

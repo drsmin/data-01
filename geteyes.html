@@ -37,7 +37,7 @@
                     alert("IOS에서는 사용할 수 없습니다");
                 } else if ("android" == result_mo_chk) {
 
-                    var customUrl = "geteyes://action=" + getParameter("action") + ",seq=" + getParameter("seq");
+                    var customUrl = "action=" + getParameter("action") + ",seq=" + getParameter("seq");
 
                     if (userAgent.match(/Chrome/)) {
 

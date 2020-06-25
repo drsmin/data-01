@@ -43,8 +43,9 @@
 
                         // 안드로이드의 크롬에서는 intent만 동작하기 때문에 intent로 호출해야함
                         setTimeout(function() {
-                            //location.href = "intent://" + customUrl + "#Intent; scheme=geteyes; action=..;category=..; package=com.leadwalk.geteyes; end;";
-                            location.href = "intent://" + customUrl + "#Intent; scheme=geteyes; package=com.leadwalk.geteyes; end;";
+                            location.href = "intent://" + customUrl + "#Intent; scheme=geteyes; action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE; package=com.leadwalk.geteyes; end;";
+                            //location.href = "intent://" + customUrl + "#Intent; scheme=geteyes; package=com.leadwalk.geteyes; end;";
+                            //location.href = customUrl;
                         }, 1000);
                     } else {
 

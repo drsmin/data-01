@@ -37,36 +37,34 @@
                     alert("IOS에서는 사용할 수 없습니다");
                 } else if ("android" == result_mo_chk) {
 
-                    var customUrl = "geteyes://action=" + getParameter("action") + ",seq=" + getParameter("seq");
+                    var customUrl = "action=" + getParameter("action") + ",seq=" + getParameter("seq");
 
-                    if (userAgent.match(/Chrome/)) {
-
-                        // 안드로이드의 크롬에서는 intent만 동작하기 때문에 intent로 호출해야함
-                        setTimeout(function() {
-                            //location.href = "intent://" + customUrl + "#Intent; scheme=geteyes; action=android.intent.action.VIEW;category=android.intent.category.BROWSABLE; package=com.leadwalk.geteyes; end;";
-                            //location.href = "intent://" + customUrl + "#Intent; scheme=geteyes; package=com.leadwalk.geteyes; end;";
-                            location.href = customUrl;
-                        }, 1000);
-                    } else {
-
-                        // 크롬 이외의 브라우저들
-                        setTimeout(
-
-                        function() {
-                            if ((new Date()).getTime() - visitedAt < 2000) {
-                                location.href = "https://play.google.com/store/apps/details?id=com.leadwalk.geteyes";
-                            }
-                        }, 500);
-
-                        var iframe = document.createElement('iframe');
-                        iframe.style.visibility = 'hidden';
-                        iframe.src = customUrl;
-                        document.body.appendChild(iframe);
-                        document.body.removeChild(iframe); // back 호출시 캐싱될 수 있으므로 제거
-
-                    }
+                    isMyApp();
+                    location.href = customUrl;
+                    
                 }
             }
+        }
+
+        function isMyApp(){
+            function clearTimers(){
+                clearInterval(heartbeat);
+                clearTimeout(timer);
+            }
+
+            function intervalHeartbeat(){
+                if(document.webkitHidden || document.hidden){
+                    clearTimers();
+                    console.log('앱이 설치 되어 있습니다.');
+                }
+            }
+
+            heartbeat = setInterval(intervalHeartbeat, 200);
+            var deLay = 1000;
+            timer = setTimeout(function() {
+                console.log('앱이 없습니다.');
+                location.href = "https://play.google.com/store/apps/details?id=com.leadwalk.geteyes";
+            }, deLay);
         }
     </script>
 

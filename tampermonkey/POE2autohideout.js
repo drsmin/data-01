@@ -1,6 +1,6 @@
  // ==UserScript==
 // @name         POE2 Auto Hideout (XHR → Vue → DOM Fallback)
-// @version      2026-01-03
+// @version      2026-01-04-001
 // @description  POE2 live search auto hideout (XHR first, Vue service, DOM fallback)
 // @match        https://poe.game.daum.net/trade2/search/poe2/*/live*
 // @run-at       document-idle
@@ -127,6 +127,25 @@
         return null;
     }
 
+     /*********************************************************
+     * Bong 제공 순간이동 시도 (fetch)
+     *********************************************************/
+    function tryBongTeleport(token) {
+        var uurl = "https://poe.game.daum.net/api/trade2/whisper";
+                
+        fetch(uurl, {
+           method: "POST",
+           headers: {
+              "Content-Type": "application/json",
+              "X-Requested-With": "XMLHttpRequest"
+           },
+           body: JSON.stringify({
+              "continue": true,
+              "token": token
+           })
+        });
+    }
+ 
     /*********************************************************
      * Vue 기반 순간이동 시도
      *********************************************************/
@@ -220,11 +239,7 @@
                     console.log('[POE2][XHR] trigger', id);
                     usedItemIds.add(id);
 
-                    const ok = tryVueTeleport(token);
-                    if (!ok) {
-                        console.log('[POE2][XHR] Teleport Fail try to domFallbackClick');
-                        setTimeout(domFallbackClick, 1000);
-                    }
+                    tryBongTeleport(token);
                     break;
                 }
             } catch (e) {

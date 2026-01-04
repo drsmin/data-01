@@ -1,6 +1,6 @@
  // ==UserScript==
 // @name         POE2 Auto Hideout (XHR → Vue → DOM Fallback)
-// @version      2026-01-04-002
+// @version      2026-01-05-001
 // @description  POE2 live search auto hideout (XHR first, Vue service, DOM fallback)
 // @match        https://poe.game.daum.net/trade2/search/poe2/*/live*
 // @run-at       document-idle
@@ -144,7 +144,8 @@
               "token": token
            })
         });
-
+        console.log('[POE2] Teleport success (BONG)');
+        lastTeleport = new Date();
         startCooldown();
         updateStatus('Teleported (BONG)');
     }

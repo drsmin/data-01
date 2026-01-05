@@ -1,7 +1,7 @@
  // ==UserScript==
-// @name         POE2 Auto Hideout (XHR → Vue → DOM Fallback)
-// @version      2026-01-05-001
-// @description  POE2 live search auto hideout (XHR first, Vue service, DOM fallback)
+// @name         POE2 Auto Hideout (WS → fetch → fetch)
+// @version      2026-01-05-002
+// @description  POE2 live search auto hideout (fetch first)
 // @match        https://poe.game.daum.net/trade2/search/poe2/*/live*
 // @run-at       document-idle
 // @grant        none
@@ -111,8 +111,9 @@
     }
 
     /*********************************************************
-     * Vue 서비스 찾기
+     * Vue 서비스 찾기 봉 텔레포트 이후 사용 안함
      *********************************************************/
+/*    
     function findVueService() {
         for (const el of document.querySelectorAll('*')) {
             const vue =
@@ -126,13 +127,14 @@
         }
         return null;
     }
+*/
 
      /*********************************************************
      * Bong 제공 순간이동 시도 (fetch)
      *********************************************************/
     function tryBongTeleport(token) {
         var uurl = "https://poe.game.daum.net/api/trade2/whisper";
-                
+
         fetch(uurl, {
            method: "POST",
            headers: {
@@ -144,15 +146,17 @@
               "token": token
            })
         });
+
         console.log('[POE2] Teleport success (BONG)');
         lastTeleport = new Date();
         startCooldown();
         updateStatus('Teleported (BONG)');
     }
- 
+
     /*********************************************************
-     * Vue 기반 순간이동 시도
+     * Vue 기반 순간이동 시도 봉 텔레포트로 교체
      *********************************************************/
+/*
     function tryVueTeleport(token) {
         const service = findVueService();
         if (!service || typeof service.whisperAccount !== 'function') {
@@ -196,10 +200,12 @@
             }
         }, 50);
     }
+*/
 
     /*********************************************************
-     * DOM fallback
+     * DOM fallback bong teleport후 사용안함
      *********************************************************/
+/*
     function domFallbackClick() {
         const btns = [...document.querySelectorAll('button')]
             .filter(b =>
@@ -217,10 +223,12 @@
         }
         return false;
     }
+*/
 
     /*********************************************************
-     * XHR 감지
+     * XHR 감지 (fetch로 우회)
      *********************************************************/
+/*
     const open = XMLHttpRequest.prototype.open;
     XMLHttpRequest.prototype.open = function (...args) {
         this.addEventListener('load', function () {
@@ -252,6 +260,77 @@
         });
         return open.apply(this, args);
     };
+    */
 
-    console.log('[POE2] Auto Hideout initialized (XHR first)');
+    function getTradeContext() {
+        const parts = location.pathname.split('/').filter(Boolean);
+        return {
+            realm: parts.includes('poe2') ? 'poe2' : 'poe',
+            query: parts[parts.length - 1]
+        };
+    }
+
+    const OriginalWebSocket = window.WebSocket;
+
+    window.WebSocket = function (url, protocols) {
+        const ws = new OriginalWebSocket(url, protocols);
+
+        ws.addEventListener('message', async (e) => {
+            let data;
+            try {
+                data = JSON.parse(e.data);
+            } catch {
+                return;
+            }
+
+            if (!data.result) return;
+
+            const { query, realm } = getTradeContext();
+            const token = data.result;
+
+            const fetchUrl =
+                `/api/trade2/fetch/${token}?query=${query}&realm=${realm}`;
+
+            if (!enabled || cooldown) return;
+
+            // 🚀 병렬 fetch (UI XHR과 독립)
+            fetch(fetchUrl, { credentials: 'include' })
+                .then(r => r.json())
+                .then(json => {
+                    console.log('[AUTO FETCH]', json);
+
+                    // 👉 자동화 로직은 여기서만 처리
+                    try {
+
+                        console.info('[POE2] fetch 병렬 처리');
+                        for (const r of json.result || []) {
+                            const id = r.id;
+                            if (usedItemIds.has(id)) continue;
+
+                            const indexed = r.listing?.indexed;
+                            const token = r.listing?.hideout_token;
+                            if (!indexed || !token) continue;
+
+                            const age = Date.now() - new Date(indexed).getTime();
+                            if (age > MAX_ITEM_AGE_MS) continue;
+
+                            console.log('[POE2][XHR] trigger', id);
+                            usedItemIds.add(id);
+
+                            tryBongTeleport(token);
+                            break;
+                        }
+                    } catch (e) {
+                        console.warn('[POE2] XHR parse error', e);
+                    }
+                })
+                .catch(console.error);
+        });
+
+        return ws;
+    };
+
+
+    console.log('[POE2] Auto Hideout initialized (fetch first)');
+
 })();

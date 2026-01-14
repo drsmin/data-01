@@ -1,6 +1,6 @@
  // ==UserScript==
  // @name         POE2 Auto Hideout (WS → fetch → fetch)
- // @version      2026-01-15-002
+ // @version      2026-01-15-003
  // @description  POE2 live search auto hideout (fetch first)
  // @match        https://poe.game.daum.net/trade2/search/poe2/*/live*
  // @match        https://www.pathofexile.com/trade2/search/poe2/*/live*
@@ -134,7 +134,7 @@
       * Bong 제공 순간이동 시도 (fetch)
       *********************************************************/
      function tryBongTeleport(token) {
-         var uurl = "https://poe.game.daum.net/api/trade2/whisper";
+         var uurl = "/api/trade2/whisper";
 
          fetch(uurl, {
              method: "POST",

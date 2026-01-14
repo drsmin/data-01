@@ -1,9 +1,9 @@
  // ==UserScript==
  // @name         POE2 Auto Hideout (WS → fetch → fetch)
- // @version      2026-01-15-001
+ // @version      2026-01-15-002
  // @description  POE2 live search auto hideout (fetch first)
  // @match        https://poe.game.daum.net/trade2/search/poe2/*/live*
- // @match        https://www.pathofexile.com/trade2/search/poe2/Standard/*/live*
+ // @match        https://www.pathofexile.com/trade2/search/poe2/*/live*
  // @run-at       document-idle
  // @grant        none
  // @updateURL    https://raw.githubusercontent.com/drsmin/data-01/refs/heads/master/tampermonkey/POE2autohideout.js

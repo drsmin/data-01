@@ -1,6 +1,6 @@
  // ==UserScript==
  // @name         POE2 Auto Hideout (WS → fetch → fetch)
- // @version      2026-01-05-003
+ // @version      2026-01-15-001
  // @description  POE2 live search auto hideout (fetch first)
  // @match        https://poe.game.daum.net/trade2/search/poe2/*/live*
  // @match        https://www.pathofexile.com/trade2/search/poe2/Standard/*/live*

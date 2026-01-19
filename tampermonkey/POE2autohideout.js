@@ -1,6 +1,6 @@
  // ==UserScript==
  // @name         POE2 Auto Hideout (WS → XHR → fetch)
- // @version      2026-01-17-001
+ // @version      2026-01-19-001
  // @description  POE2 live search auto hideout (fetch first)
  // @match        https://poe.game.daum.net/trade2/search/poe2/*/live*
  // @match        https://www.pathofexile.com/trade2/search/poe2/*/live*
@@ -16,7 +16,7 @@
      /*********************************************************
       * 상태
       *********************************************************/
-     const version = '2026-01-17-001';
+     const version = '2026-01-19-001';
      let enabled = true;
      let cooldown = false;
      let lastTeleport = null;
@@ -126,14 +126,9 @@
                  "X-Requested-With": "XMLHttpRequest"
              },
              body: JSON.stringify({
-                 "token": token
-             })
-             /*
-             body: JSON.stringify({
                  "continue": true,
                  "token": token
              })
-             */
          });
 
          console.log('[POE2] Teleport success (BONG)');

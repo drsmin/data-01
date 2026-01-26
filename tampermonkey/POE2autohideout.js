@@ -1,10 +1,11 @@
  // ==UserScript==
  // @name         POE2 Alert (WS → XHR → alert)
- // @version      2026-01-26-003
+ // @version      2026-01-26-004
  // @description  POE2 live search alert & focus
  // @match        https://poe.game.daum.net/trade2/search/poe2/*/live*
  // @run-at       document-idle
- // @grant        none
+ // @grant        GM_xmlhttpRequest
+ // @connect      127.0.0.1
  // @updateURL    https://raw.githubusercontent.com/drsmin/data-01/refs/heads/master/tampermonkey/POE2autohideout.js
  // @downloadURL    https://raw.githubusercontent.com/drsmin/data-01/refs/heads/master/tampermonkey/POE2autohideout.js
  // ==/UserScript==
@@ -15,12 +16,13 @@
      /*********************************************************
       * 상태
       *********************************************************/
-     const version = '2026-01-26-003';
+     const version = '2026-01-26-004';
      let enabled = true;
      let cooldown = false;
      let lastTeleport = null;
      const usedItemIds = new Set();
      let lastWhisperResult = null;
+     let serverAlive = false;
 
      const COOLDOWN_MS = 30_000;
      const MAX_ITEM_AGE_MS = 60_000;
@@ -86,6 +88,7 @@
          status.textContent =
              `Version: ${version}\n` +
              `Status: ${text}\n` +
+             `Server: ${serverAlive ? 'ON' : 'OFF'}\n` +
              `Cooldown: ${cooldown ? 'Active' : 'Ready'}\n` +
              `Last Teleport: ${last}`;
      }
@@ -157,21 +160,31 @@
      }
 
      function notifyAndFocusSafe(itemName) {
-         if (Notification.permission !== 'granted') return;
+         const script = document.createElement("script");
+         script.textContent = `
+        (function() {
+            if (!("Notification" in window)) return;
 
-         const n = new Notification('POE2 Trade', {
-             body: itemName,
-             silent: false,
-             requireInteraction: true // 자동으로 안 사라짐
-         });
+            if (Notification.permission === 'default') {
+                Notification.requestPermission();
+                return;
+            }
+            if (Notification.permission !== 'granted') return;
 
-         n.onclick = () => {
-             // ❗ 절대 window.open 쓰지 말 것
-             try {
-                 window.focus();
-             } catch (e) {}
-             n.close();
-         };
+            const n = new Notification('POE2 Trade', {
+                body: ${JSON.stringify(itemName)},
+                silent: false,
+                requireInteraction: true
+            });
+
+            n.onclick = () => {
+                try { window.focus(); } catch (e) {}
+                n.close();
+            };
+        })();
+    `;
+         document.documentElement.appendChild(script);
+         script.remove();
      }
 
      function getItemName(r) {
@@ -180,6 +193,84 @@
           return `${item.name} ${item.typeLine || ""}`.trim();
         return item.typeLine || item.baseType || "Unknown Item";
       }
+
+     function formatPrice(listing) {
+         const price = listing?.price;
+         if (!price) return "N/A";
+
+         const amount = price.amount;
+         const currency = price.currency;
+
+         if (!amount || !currency) return "N/A";
+         return `${amount} ${currency}`;
+     }
+
+     function sendAlertIfServerAlive(payload) {
+         let finished = false;
+
+         const timeout = setTimeout(() => {
+             if (!finished) {
+                 serverAlive = false;
+                 updateStatus('Running');
+             }
+         }, 300);
+
+         GM_xmlhttpRequest({
+             method: "GET",
+             url: "http://127.0.0.1:5001/health",
+             onload: () => {
+                 finished = true;
+                 clearTimeout(timeout);
+
+                 serverAlive = true;
+                 updateStatus('Running');
+
+                 GM_xmlhttpRequest({
+                     method: "POST",
+                     url: "http://127.0.0.1:5001/alert",
+                     headers: { "Content-Type": "application/json" },
+                     data: JSON.stringify(payload)
+                 });
+             },
+             onerror: () => {
+                 finished = true;
+                 clearTimeout(timeout);
+
+                 serverAlive = false;
+                 updateStatus('Running');
+             }
+         });
+     }
+
+     function checkServerAliveOnce() {
+         let finished = false;
+
+         const timeout = setTimeout(() => {
+             if (!finished) {
+                 serverAlive = false;
+                 updateStatus('Running');
+             }
+         }, 300);
+
+         GM_xmlhttpRequest({
+             method: "GET",
+             url: "http://127.0.0.1:5001/health",
+             onload: () => {
+                 finished = true;
+                 clearTimeout(timeout);
+
+                 serverAlive = true;
+                 updateStatus('Running');
+             },
+             onerror: () => {
+                 finished = true;
+                 clearTimeout(timeout);
+
+                 serverAlive = false;
+                 updateStatus('Running');
+             }
+         });
+     }
 
      /*********************************************************
       * XHR 감지
@@ -211,9 +302,13 @@
                      //notify('POE2 Trade', '새 거래가 감지되었습니다.');
 
                      const itemName = getItemName(r);
-                      
-                     focusTab(itemName);
-                     notifyAndFocusSafe(itemName);
+                     const priceText = formatPrice(r.listing);
+
+                     focusTab(itemName + ' ' + priceText);
+                     sendAlertIfServerAlive({
+                         item: itemName,
+                         price: priceText
+                     });
 
                      lastTeleport = new Date(); // 상태 표시용으로만 유지
                      startCooldown();
@@ -228,5 +323,6 @@
      };
 
      console.log('[POE2] Auto Hideout initialized (fetch first)');
+     checkServerAliveOnce();
 
  })();

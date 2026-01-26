@@ -1,6 +1,6 @@
  // ==UserScript==
  // @name         POE2 Alert (WS → XHR → alert)
- // @version      2026-01-26-002
+ // @version      2026-01-26-003
  // @description  POE2 live search alert & focus
  // @match        https://poe.game.daum.net/trade2/search/poe2/*/live*
  // @run-at       document-idle
@@ -15,7 +15,7 @@
      /*********************************************************
       * 상태
       *********************************************************/
-     const version = '2026-01-26-002';
+     const version = '2026-01-26-003';
      let enabled = true;
      let cooldown = false;
      let lastTeleport = null;
@@ -150,17 +150,17 @@
          }
      }
 
-     function focusTab() {
+     function focusTab(itemName) {
          try {
-             document.title = '🔔🔔 NEW TRADE'; // 시각적 힌트
+             document.title = '🔔🔔' + itemName; // 시각적 힌트
          } catch (e) {}
      }
 
-     function notifyAndFocusSafe() {
+     function notifyAndFocusSafe(itemName) {
          if (Notification.permission !== 'granted') return;
 
          const n = new Notification('POE2 Trade', {
-             body: '이 알림을 클릭하면 거래 탭으로 이동합니다',
+             body: itemName,
              silent: false,
              requireInteraction: true // 자동으로 안 사라짐
          });
@@ -174,6 +174,12 @@
          };
      }
 
+     function getItemName(r) {
+        const item = r.item || {};
+        if (item.name && item.name.trim())
+          return `${item.name} ${item.typeLine || ""}`.trim();
+        return item.typeLine || item.baseType || "Unknown Item";
+      }
 
      /*********************************************************
       * XHR 감지
@@ -203,8 +209,11 @@
                      //tryBongTeleport(token);
                      // ✅ 알림 + 포커스만
                      //notify('POE2 Trade', '새 거래가 감지되었습니다.');
-                     focusTab();
-                     notifyAndFocusSafe();
+
+                     const itemName = getItemName(r);
+                      
+                     focusTab(itemName);
+                     notifyAndFocusSafe(itemName);
 
                      lastTeleport = new Date(); // 상태 표시용으로만 유지
                      startCooldown();

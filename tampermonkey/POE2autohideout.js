@@ -1,7 +1,7 @@
  // ==UserScript==
- // @name         POE2 Auto Hideout (WS → XHR → fetch)
- // @version      2026-01-22-002
- // @description  POE2 live search auto hideout (fetch first)
+ // @name         POE2 Alert (WS → XHR → alert)
+ // @version      2026-01-26-001
+ // @description  POE2 live search alert & focus
  // @match        https://poe.game.daum.net/trade2/search/poe2/*/live*
  // @run-at       document-idle
  // @grant        none
@@ -15,7 +15,7 @@
      /*********************************************************
       * 상태
       *********************************************************/
-     const version = '2026-01-22-002';
+     const version = '2026-01-26-001';
      let enabled = true;
      let cooldown = false;
      let lastTeleport = null;
@@ -83,7 +83,7 @@
          const last = lastTeleport ?
              lastTeleport.toLocaleTimeString() :
              'None';
-         status.textContent = 
+         status.textContent =
              `Version: ${version}\n` +
              `Status: ${text}\n` +
              `Cooldown: ${cooldown ? 'Active' : 'Ready'}\n` +
@@ -136,12 +136,34 @@
          updateStatus('Teleported (BONG)');
      }
 
+     function notify(title, body) {
+         if (Notification.permission === 'granted') {
+             new Notification(title, {
+                 body
+             });
+         } else if (Notification.permission !== 'denied') {
+             Notification.requestPermission().then(p => {
+                 if (p === 'granted') new Notification(title, {
+                     body
+                 });
+             });
+         }
+     }
+
+     function focusTab() {
+         try {
+             window.focus();
+             document.title = '🔔 NEW TRADE — POE2'; // 시각적 힌트
+         } catch (e) {}
+     }
+
+
      /*********************************************************
       * XHR 감지
       *********************************************************/
      const open = XMLHttpRequest.prototype.open;
-     XMLHttpRequest.prototype.open = function (...args) {
-         this.addEventListener('load', function () {
+     XMLHttpRequest.prototype.open = function(...args) {
+         this.addEventListener('load', function() {
              if (!enabled || cooldown) return;
              if (!this.responseURL.includes('/api/trade2/fetch')) return;
 
@@ -161,7 +183,14 @@
                      console.log('[POE2][XHR] trigger', id);
                      usedItemIds.add(id);
 
-                     tryBongTeleport(token);
+                     //tryBongTeleport(token);
+                     // ✅ 알림 + 포커스만
+                     notify('POE2 Trade', '새 거래가 감지되었습니다.');
+                     focusTab();
+
+                     lastTeleport = new Date(); // 상태 표시용으로만 유지
+                     startCooldown();
+                     updateStatus('Notified');
                      break;
                  }
              } catch (e) {
@@ -170,7 +199,7 @@
          });
          return open.apply(this, args);
      };
-  
+
      console.log('[POE2] Auto Hideout initialized (fetch first)');
 
  })();

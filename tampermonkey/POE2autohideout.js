@@ -1,6 +1,6 @@
  // ==UserScript==
  // @name         POE2 Alert (WS → XHR → alert)
- // @version      2026-01-26-001
+ // @version      2026-01-26-002
  // @description  POE2 live search alert & focus
  // @match        https://poe.game.daum.net/trade2/search/poe2/*/live*
  // @run-at       document-idle
@@ -15,7 +15,7 @@
      /*********************************************************
       * 상태
       *********************************************************/
-     const version = '2026-01-26-001';
+     const version = '2026-01-26-002';
      let enabled = true;
      let cooldown = false;
      let lastTeleport = null;
@@ -152,9 +152,26 @@
 
      function focusTab() {
          try {
-             window.focus();
-             document.title = '🔔 NEW TRADE — POE2'; // 시각적 힌트
+             document.title = '🔔🔔 NEW TRADE'; // 시각적 힌트
          } catch (e) {}
+     }
+
+     function notifyAndFocusSafe() {
+         if (Notification.permission !== 'granted') return;
+
+         const n = new Notification('POE2 Trade', {
+             body: '이 알림을 클릭하면 거래 탭으로 이동합니다',
+             silent: false,
+             requireInteraction: true // 자동으로 안 사라짐
+         });
+
+         n.onclick = () => {
+             // ❗ 절대 window.open 쓰지 말 것
+             try {
+                 window.focus();
+             } catch (e) {}
+             n.close();
+         };
      }
 
 
@@ -185,8 +202,9 @@
 
                      //tryBongTeleport(token);
                      // ✅ 알림 + 포커스만
-                     notify('POE2 Trade', '새 거래가 감지되었습니다.');
+                     //notify('POE2 Trade', '새 거래가 감지되었습니다.');
                      focusTab();
+                     notifyAndFocusSafe();
 
                      lastTeleport = new Date(); // 상태 표시용으로만 유지
                      startCooldown();

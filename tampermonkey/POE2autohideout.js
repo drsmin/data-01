@@ -1,8 +1,9 @@
  // ==UserScript==
- // @name         POE2 Alert (WS → XHR → alert)
- // @version      2026-01-26-004
+ // @name         POE1&2 Alert (WS → XHR → alert)
+ // @version      2026-03-14-001
  // @description  POE2 live search alert & focus
  // @match        https://poe.game.daum.net/trade2/search/poe2/*/live*
+ // @match        https://poe.game.daum.net/trade/search/Mirage/*/live*
  // @run-at       document-idle
  // @grant        GM_xmlhttpRequest
  // @connect      127.0.0.1
@@ -279,7 +280,7 @@
      XMLHttpRequest.prototype.open = function(...args) {
          this.addEventListener('load', function() {
              if (!enabled || cooldown) return;
-             if (!this.responseURL.includes('/api/trade2/fetch')) return;
+             if (!this.responseURL.includes('/api/trade2/fetch') && !this.responseURL.includes('/api/trade/fetch')) return;
 
              try {
                  const json = JSON.parse(this.responseText);

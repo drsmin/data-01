@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-03-14-002
+// @version      2026-03-14-003
 // @description  POE2 live search alert & auto hideout
-// @match        https://poe.game.daum.net/trade2/search/poe2/*/live*
-// @match        https://poe.game.daum.net/trade/search/Mirage/*/live*
+// @match        https://poe.game.daum.net/trade2/search/poe2/*/live
+// @match        https://poe.game.daum.net/trade/search/*/live
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
@@ -17,9 +17,8 @@
     /*********************************************************
      * 상태
      *********************************************************/
-    const version = '2026-03-14-002';
+    const version = '2026-03-14-003';
     let enabled = true;
-    let cooldown = false;
     let lastTeleport = null;
 
     let autoHideoutArmed = false;
@@ -62,23 +61,6 @@ white-space: pre;
 min-width: 220px;
 `;
 
-    const button = document.createElement('button');
-
-    button.textContent = 'STOP';
-
-    button.style.cssText = `
-display:block;
-width:100%;
-margin-bottom:6px;
-padding:6px;
-font-weight:bold;
-cursor:pointer;
-background:#2ecc71;
-color:#fff;
-border:none;
-border-radius:4px;
-`;
-
     const hideoutBtn = document.createElement('button');
 
     hideoutBtn.textContent = 'AUTO HO OFF';
@@ -98,7 +80,6 @@ border-radius:4px;
 
     const status = document.createElement('div');
 
-    overlay.appendChild(button);
     overlay.appendChild(hideoutBtn);
     overlay.appendChild(status);
 
@@ -108,19 +89,6 @@ border-radius:4px;
     /*********************************************************
      * 버튼 동작
      *********************************************************/
-    button.onclick = () => {
-
-        enabled = !enabled;
-
-        button.textContent = enabled ? 'STOP' : 'START';
-
-        button.style.background =
-            enabled ? '#2ecc71' : '#e74c3c';
-
-        updateStatus(enabled ? 'Running' : 'Stopped');
-
-    };
-
     hideoutBtn.onclick = () => {
 
         setAutoHideout(!autoHideoutArmed);
@@ -128,6 +96,8 @@ border-radius:4px;
     };
 
     function setAutoHideout(state) {
+
+        console.log('[POE] setAutoHideout ', state);
 
         autoHideoutArmed = state;
         autoHideoutTriggered = false;
@@ -153,7 +123,6 @@ border-radius:4px;
             `Version: ${version}
 Status: ${text}
 Server: ${serverAlive ? 'ON':'OFF'}
-Cooldown: ${cooldown ? 'Active':'Ready'}
 Last Teleport: ${last}`;
 
     }
@@ -162,55 +131,24 @@ Last Teleport: ${last}`;
 
 
     /*********************************************************
-     * 쿨다운
-     *********************************************************/
-    function startCooldown() {
-
-        cooldown = true;
-
-        let remain = COOLDOWN_MS / 1000;
-
-        const tick = setInterval(() => {
-
-            if (!cooldown) {
-
-                clearInterval(tick);
-                return;
-
-            }
-
-            remain--;
-
-            updateStatus(`Cooldown ${remain}s`);
-
-            if (remain <= 0) {
-
-                cooldown = false;
-                updateStatus('Ready');
-
-                clearInterval(tick);
-
-            }
-
-        }, 1000);
-
-    }
-
-
-    /*********************************************************
      * hideout 클릭
      *********************************************************/
     function clickLastHideoutButton() {
 
         const buttons = document.querySelectorAll(
-            'button.direct-btn'
+            'button.btn.btn-xs.btn-default.direct-btn'
         );
 
-        if (!buttons.length) return;
+        if (!buttons.length) {
+            console.log('[POE] not found button.btn.btn-xs.btn-default.direct-btn');
+            return;
+        }
 
-        const btn = buttons[buttons.length - 1];
+        const btn = [...buttons]
+        .filter(b => b.textContent.includes("Hideout"))
+        .sort((a,b)=>a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
 
-        if (!btn.innerText.includes("Hideout")) return;
+        if (!btn.textContent.toLowerCase().includes("hideout")) return;
 
         const delay = randomDelay();
 
@@ -218,10 +156,45 @@ Last Teleport: ${last}`;
 
         setTimeout(() => {
 
-            btn.click();
+            console.log('[POE] button click!!');
+            simulateHumanClick(btn);
+            //btn.click();
 
         }, delay);
 
+    }
+
+    function simulateHumanClick(element) {
+        if (!element) return console.error("요소를 찾을 수 없습니다.");
+
+        // 1. 버튼의 화면상 실제 좌표 및 정중앙 위치 계산
+        const rect = element.getBoundingClientRect();
+        const x = rect.left + (rect.width / 2);
+        const y = rect.top + (rect.height / 2);
+
+        // 사람의 클릭을 모방하기 위한 공통 이벤트 옵션
+        const eventOptions = {
+            bubbles: true,
+            cancelable: true,
+            button: 0,
+            buttons: 1,
+            clientX: x,
+            clientY: y
+        };
+
+        // 마우스 올리기 (Hover)
+        element.dispatchEvent(new MouseEvent("mouseover", eventOptions));
+        element.dispatchEvent(new MouseEvent("mouseenter", eventOptions));
+
+        // 포커스 주기 (클릭 전 포커스가 가는 동작 모방)
+        element.focus && element.focus();
+
+        // 마우스 버튼 누르기
+        element.dispatchEvent(new MouseEvent("mousedown", eventOptions));
+        element.dispatchEvent(new MouseEvent("mouseup", eventOptions));
+        element.dispatchEvent(new MouseEvent("click", eventOptions));
+
+        console.log("[POE] button click done!");
     }
 
 
@@ -246,8 +219,9 @@ Last Teleport: ${last}`;
 
         const item = r.item || {};
 
-        if (item.name && item.name.trim())
+        if (item.name && item.name.trim()) {
             return `${item.name} ${item.typeLine||""}`.trim();
+        }
 
         return item.typeLine || item.baseType || "Unknown Item";
 
@@ -370,8 +344,6 @@ Last Teleport: ${last}`;
 
         this.addEventListener('load', function() {
 
-            if (!enabled || cooldown) return;
-
             if (!this.responseURL.includes('/api/trade2/fetch') &&
                 !this.responseURL.includes('/api/trade/fetch')) return;
 
@@ -435,8 +407,6 @@ Last Teleport: ${last}`;
                     });
 
                     lastTeleport = new Date();
-
-                    startCooldown();
 
                     updateStatus('Notified');
 

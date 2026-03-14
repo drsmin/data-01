@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-03-14-003
+// @version      2026-03-14-004
 // @description  POE2 live search alert & auto hideout
 // @match        https://poe.game.daum.net/trade2/search/poe2/*/live
 // @match        https://poe.game.daum.net/trade/search/*/live
@@ -17,7 +17,7 @@
     /*********************************************************
      * 상태
      *********************************************************/
-    const version = '2026-03-14-003';
+    const version = '2026-03-14-004';
     let enabled = true;
     let lastTeleport = null;
 
@@ -161,6 +161,41 @@ Last Teleport: ${last}`;
             //btn.click();
 
         }, delay);
+
+    }
+
+    function waitForHideoutButton() {
+
+        console.log("[POE] waiting hideout button...");
+
+        const observer = new MutationObserver((mutations) => {
+
+            const btn = [...document.querySelectorAll(
+                'button.btn.btn-xs.btn-default.direct-btn'
+            )].find(b => b.textContent.toLowerCase().includes("hideout"));
+
+            if (!btn) return;
+
+            console.log("[POE] hideout button detected");
+
+            observer.disconnect();
+
+            const delay = randomDelay();
+
+            console.log("[POE] hideout delay", delay);
+
+            setTimeout(() => {
+
+                simulateHumanClick(btn);
+
+            }, delay);
+
+        });
+
+        observer.observe(document.body, {
+            childList: true,
+            subtree: true
+        });
 
     }
 
@@ -378,15 +413,8 @@ Last Teleport: ${last}`;
                     if (autoHideoutArmed && !autoHideoutTriggered) {
 
                         autoHideoutTriggered = true;
-
-                        setTimeout(() => {
-
-                            clickLastHideoutButton();
-
-                            /* 자동 OFF */
-                            setAutoHideout(false);
-
-                        }, 300);
+                        setAutoHideout(false);
+                        waitForHideoutButton();
 
                     }
 

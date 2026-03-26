@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-03-14-004
+// @version      2026-03-26-001
 // @description  POE2 live search alert & auto hideout
 // @match        https://poe.game.daum.net/trade2/search/poe2/*/live
 // @match        https://poe.game.daum.net/trade/search/*/live
@@ -17,7 +17,7 @@
     /*********************************************************
      * 상태
      *********************************************************/
-    const version = '2026-03-14-004';
+    const version = '2026-03-26-001';
     let enabled = true;
     let lastTeleport = null;
 
@@ -35,7 +35,7 @@
     /*********************************************************
      * 랜덤 딜레이
      *********************************************************/
-    function randomDelay(min = 123, max = 1345) {
+    function randomDelay(min = 234, max = 2345) {
         return Math.floor(Math.random() * (max - min + 1)) + min;
     }
 
@@ -457,5 +457,7 @@ Last Teleport: ${last}`;
     console.log('[POE] Auto Hideout initialized');
 
     checkServerAliveOnce();
+
+    setAutoHideout(true);
 
 })();

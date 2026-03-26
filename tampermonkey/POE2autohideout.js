@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-03-26-001
+// @version      2026-03-26-002
 // @description  POE2 live search alert & auto hideout
 // @match        https://poe.game.daum.net/trade2/search/poe2/*/live
 // @match        https://poe.game.daum.net/trade/search/*/live
@@ -17,7 +17,7 @@
     /*********************************************************
      * 상태
      *********************************************************/
-    const version = '2026-03-26-001';
+    const version = '2026-03-26-002';
     let enabled = true;
     let lastTeleport = null;
 
@@ -145,7 +145,7 @@ Last Teleport: ${last}`;
         }
 
         const btn = [...buttons]
-        .filter(b => b.textContent.includes("Hideout"))
+        .filter(b => (b.textContent.includes("Hideout") || b.textContent.includes("은신처")))
         .sort((a,b)=>a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
 
         if (!btn.textContent.toLowerCase().includes("hideout")) return;
@@ -172,7 +172,7 @@ Last Teleport: ${last}`;
 
             const btn = [...document.querySelectorAll(
                 'button.btn.btn-xs.btn-default.direct-btn'
-            )].find(b => b.textContent.toLowerCase().includes("hideout"));
+            )].find(b => (b.textContent.toLowerCase().includes("hideout") || b.textContent.includes("은신처")));
 
             if (!btn) return;
 

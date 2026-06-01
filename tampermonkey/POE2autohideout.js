@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-03-26-002
+// @version      2026-06-01-001
 // @description  POE2 live search alert & auto hideout
 // @match        https://poe.game.daum.net/trade2/search/poe2/*/live
 // @match        https://poe.game.daum.net/trade/search/*/live
@@ -17,7 +17,7 @@
     /*********************************************************
      * 상태
      *********************************************************/
-    const version = '2026-03-26-002';
+    const version = '2026-06-01-001';
     let enabled = true;
     let lastTeleport = null;
 
@@ -145,8 +145,8 @@ Last Teleport: ${last}`;
         }
 
         const btn = [...buttons]
-        .filter(b => (b.textContent.includes("Hideout") || b.textContent.includes("은신처")))
-        .sort((a,b)=>a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
+            .filter(b => (b.textContent.includes("Hideout") || b.textContent.includes("은신처")))
+            .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
 
         if (!btn.textContent.toLowerCase().includes("hideout")) return;
 
@@ -369,95 +369,109 @@ Last Teleport: ${last}`;
 
     }
 
+    function processTradeResults(json, source = 'UNKNOWN') {
 
-    /*********************************************************
-     * XHR 감지
-     *********************************************************/
-    const open = XMLHttpRequest.prototype.open;
+        try {
 
-    XMLHttpRequest.prototype.open = function(...args) {
+            for (const r of json.result || []) {
 
-        this.addEventListener('load', function() {
+                const id = r.id;
 
-            if (!this.responseURL.includes('/api/trade2/fetch') &&
-                !this.responseURL.includes('/api/trade/fetch')) return;
+                if (usedItemIds.has(id)) continue;
+
+                const indexed = r.listing?.indexed;
+
+                if (!indexed) continue;
+
+                const age =
+                    Date.now() - new Date(indexed).getTime();
+
+                if (age > MAX_ITEM_AGE_MS) continue;
+
+                usedItemIds.add(id);
+
+                console.log(`[POE][${source}] trigger`, id);
+
+                /**********************
+                 * AUTO HIDEOUT
+                 **********************/
+                if (autoHideoutArmed && !autoHideoutTriggered) {
+
+                    autoHideoutTriggered = true;
+                    setAutoHideout(false);
+                    waitForHideoutButton();
+
+                }
+
+                /**********************
+                 * 알림
+                 **********************/
+                const itemName = getItemName(r);
+                const priceText = formatPrice(r.listing);
+
+                focusTab(itemName + ' ' + priceText);
+
+                sendAlertIfServerAlive({
+                    item: itemName,
+                    price: priceText
+                });
+
+                lastTeleport = new Date();
+
+                updateStatus('Notified');
+
+                break;
+            }
+
+        } catch (e) {
+
+            console.error(`[POE][${source}] process error`, e);
+
+        }
+    }
+
+    // =========================
+    // Response JSON Hook
+    // =========================
+    (function () {
+
+        const originalJson = Response.prototype.json;
+
+        Response.prototype.json = async function (...args) {
+
+            const result = await originalJson.apply(this, args);
 
             try {
 
-                const json = JSON.parse(this.responseText);
+                const url = this.url || '';
 
-                for (const r of json.result || []) {
+                if (url.includes('/api/trade2/fetch')) {
 
-                    const id = r.id;
+                    console.log('[POE][JSON] trade response detected');
+                    console.log('[POE][JSON] URL:', url);
+                    console.log('[POE][JSON] result count:',
+                                result?.result?.length || 0);
 
-                    if (usedItemIds.has(id)) continue;
-
-                    const indexed = r.listing?.indexed;
-
-                    if (!indexed) continue;
-
-                    const age = Date.now() - new Date(indexed).getTime();
-
-                    if (age > MAX_ITEM_AGE_MS) continue;
-
-                    const token = r.listing?.hideout_token;
-
-                    usedItemIds.add(id);
-
-                    console.log('[POE2][XHR] trigger', id);
-
-
-                    /**********************
-                     * AUTO HIDEOUT
-                     **********************/
-                    if (autoHideoutArmed && !autoHideoutTriggered) {
-
-                        autoHideoutTriggered = true;
-                        setAutoHideout(false);
-                        waitForHideoutButton();
-
-                    }
-
-
-                    /**********************
-                     * 알림
-                     **********************/
-                    const itemName = getItemName(r);
-                    const priceText = formatPrice(r.listing);
-
-                    focusTab(itemName + ' ' + priceText);
-
-                    sendAlertIfServerAlive({
-
-                        item: itemName,
-                        price: priceText
-
-                    });
-
-                    lastTeleport = new Date();
-
-                    updateStatus('Notified');
-
-                    break;
-
+                    processTradeResults(result, 'JSON');
                 }
 
             } catch (e) {
 
-                console.warn('[POE2] XHR parse error', e);
+                console.error('[POE][JSON]', e);
 
             }
 
-        });
+            return result;
+        };
 
-        return open.apply(this, args);
+        console.log('[POE] Response.json hook installed');
 
-    };
+    })();
 
     console.log('[POE] Auto Hideout initialized');
 
     checkServerAliveOnce();
 
-    setAutoHideout(true);
+    setAutoHideout(false);
 
 })();

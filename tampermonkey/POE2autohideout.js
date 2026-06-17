@@ -1,9 +1,9 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-06-01-001
+// @version      2026-06-17-001
 // @description  POE2 live search alert & auto hideout
-// @match        https://poe.game.daum.net/trade2/search/poe2/*/live
-// @match        https://poe.game.daum.net/trade/search/*/live
+// @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
+// @match        https://poe.kakaogames.com/trade/search/*/live
 // @run-at       document-idle
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
@@ -17,7 +17,7 @@
     /*********************************************************
      * 상태
      *********************************************************/
-    const version = '2026-06-01-001';
+    const version = '2026-06-17-001';
     let enabled = true;
     let lastTeleport = null;
 

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-04-007
+// @version      2026-08-04-008
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -318,7 +318,12 @@ Last Teleport: ${fmt(lastTeleport)}`;
     const HIDEOUT_BTN_SELECTOR = 'button.direct-btn';
 
     // 결과 행은 <div class="row" data-id="<fetch 응답의 r.id>"> 형태다.
-    // 실제 응답/DOM 쌍으로 확인함: data-id === result[].id === result[].item.id
+    //
+    // 검증 범위: POE1(/trade) 의 실제 응답과 DOM 을 짝으로 대조해
+    //   data-id === result[].id === result[].item.id 를 확인했고, 브라우저에서도 동작 확인.
+    // POE2(/trade2) 마크업은 아직 미확인이다. 새 시즌에서 확인할 것.
+    // 구조가 다르면 알림은 그대로 동작하고(JSON 기반) 자동 은신처만 실패하며,
+    // 대기 타임아웃에서 "행이 렌더링되지 않음" 경고로 드러난다.
     //
     // 이 함수는 MutationObserver 가 렌더링 중 수십 번 호출한다. 그래서 탐색 실패는
     // 한 번만 찍는다 (매 호출마다 찍으면 콘솔이 잠겨 정작 원인을 못 본다).

@@ -185,10 +185,12 @@ function makeTab(name, store, clock, src = SRC) {
         });
     };
 
-    // 거래소 fetch 응답 1건을 흘려보낸다. 실제 응답 형태를 따른다.
-    tab.feed = async (id, indexedIso) => {
+    // 거래소 fetch 응답 1건을 흘려보낸다.
+    // 기본은 POE1(/api/trade/fetch) — 실제 응답/DOM 을 대조해 확인된 쪽이다.
+    // POE2 경로를 보려면 api='trade2' 로 넘긴다.
+    tab.feed = async (id, indexedIso, api = 'trade') => {
         const res = new Response(
-            'https://poe.kakaogames.com/api/trade2/fetch/' + id,
+            `https://poe.kakaogames.com/api/${api}/fetch/` + id,
             {
                 result: [{
                     id,
@@ -378,6 +380,29 @@ function section(title) {
           F.logs.some(([lvl, m]) =>
               lvl === 'warn' && m.includes('localStorage') && m.includes('탭 간 공유')),
           true);
+
+    section('T10: POE1 / POE2 fetch URL 을 각각 올바른 스코프로 구분한다');
+    // @match 가 두 게임을 다 받으므로 후킹은 /api/trade/fetch 와 /api/trade2/fetch
+    // 양쪽을 잡아야 한다. 정규식이 trade2 를 trade 로 잘못 읽으면 로그 스코프가
+    // 뒤바뀌어, 어느 게임에서 난 문제인지 추적할 수 없게 된다.
+    const storeG = makeSharedStore();
+    const clockG = makeClock();
+
+    const P1 = makeTab('P1', storeG, clockG);
+    await P1.feed('e'.repeat(64), new Date().toISOString(), 'trade');
+
+    check('POE1 URL → [POE][POE1] 스코프',
+          P1.logs.some(([, m]) => m.includes('[POE][POE1] trigger')), true);
+    check('POE1 로그에 POE2 스코프 없음',
+          P1.logs.some(([, m]) => m.includes('[POE][POE2]')), false);
+
+    const P2 = makeTab('P2', storeG, clockG);
+    await P2.feed('f'.repeat(64), new Date().toISOString(), 'trade2');
+
+    check('POE2 URL → [POE][POE2] 스코프',
+          P2.logs.some(([, m]) => m.includes('[POE][POE2] trigger')), true);
+    check('POE2 로그에 POE1 스코프 없음',
+          P2.logs.some(([, m]) => m.includes('[POE][POE1]')), false);
 
     section('A 탭 로그 전문 (형식 눈으로 확인용)');
     for (const [lvl, m] of A.logs) console.log(`  [${lvl}] ${m}`);

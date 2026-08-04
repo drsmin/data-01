@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-04-006
+// @version      2026-08-04-007
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -53,6 +53,12 @@
     // 헬스체크 응답이 이 시간 안에 안 오면 서버를 죽은 것으로 표시한다.
     const HEALTH_TIMEOUT_MS = 300;
 
+    // 탭 간 공유 상태. @match 가 모두 같은 오리진(poe.kakaogames.com)이라
+    // localStorage 하나로 POE1/POE2 탭까지 전부 묶인다.
+    // storage 이벤트는 값을 바꾼 탭에서는 발화하지 않으므로 그대로 브로드캐스트로 쓴다.
+    const LS_ARMED = 'poeAutoHideout.armed';            // '1' | '0'
+    const LS_LAST_TELEPORT = 'poeAutoHideout.lastTeleport';  // epoch ms 문자열
+
 
     /*********************************************************
      * 로그
@@ -75,6 +81,7 @@
      *   POE2     POE2 매물 처리
      *   HIDEOUT  은신처 버튼 대기 / 클릭
      *   ALERT    로컬 알림 서버 통신
+     *   SYNC     탭 간 상태 공유
      *********************************************************/
     const LOG_TAG = 'POE';
 
@@ -95,6 +102,82 @@
         if (typeof id !== 'string' || !id) return '?';
 
         return id.length > 8 ? id.slice(0, 8) : id;
+
+    }
+
+
+    /*********************************************************
+     * 탭 간 공유 저장소
+     *
+     * localStorage 는 시크릿 모드나 사이트 데이터 차단 설정에서 던질 수 있다.
+     * 그 경우 공유를 포기하고 탭 단독으로 계속 동작한다. 조용히 반쪽만 도는 걸
+     * 막기 위해 한 번은 반드시 경고를 남긴다.
+     *********************************************************/
+    let lsFailReported = false;
+
+    function reportLsFailure(op, e) {
+
+        if (lsFailReported) return;
+
+        lsFailReported = true;
+
+        warn('SYNC', `localStorage ${op} 실패 — 탭 간 공유를 끄고`
+             + ' 이 탭 단독으로만 동작한다 (이후 동일 경고는 생략)', e);
+
+    }
+
+    function lsRead(key) {
+
+        try {
+
+            return localStorage.getItem(key);
+
+        } catch (e) {
+
+            reportLsFailure('읽기', e);
+            return null;
+
+        }
+
+    }
+
+    function lsWrite(key, value) {
+
+        try {
+
+            localStorage.setItem(key, value);
+            return true;
+
+        } catch (e) {
+
+            reportLsFailure('쓰기', e);
+            return false;
+
+        }
+
+    }
+
+    // 공유된 무장 상태. 키가 없으면(첫 탭) null 을 준다.
+    // false 와 null 을 구분해야 새 탭이 기존 상태를 덮어쓰지 않는다.
+    function readSharedArmed() {
+
+        const raw = lsRead(LS_ARMED);
+
+        if (raw === null) return null;
+
+        return raw === '1';
+
+    }
+
+    function readSharedTeleportMs() {
+
+        const raw = lsRead(LS_LAST_TELEPORT);
+
+        if (raw === null) return null;
+
+        const ms = Number(raw);
+
+        return Number.isFinite(ms) ? ms : null;
 
     }
 
@@ -172,22 +255,35 @@ border-radius:4px;
 
     };
 
+    // 이 탭에만 상태를 적용한다. 저장소에 쓰지 않으므로 다른 탭에서 온 변경을
+    // 반영할 때 쓴다 (여기서 쓰면 탭끼리 서로 되쏘며 무한 반복한다).
+    //
     // reason 은 왜 상태가 바뀌었는지 한 줄에 함께 남기기 위한 것이다.
-    // 자동 해제와 수동 토글을 콘솔에서 구분할 수 있어야 한다.
-    function setAutoHideout(state, reason) {
+    // 자동 해제 / 버튼 클릭 / 다른 탭을 콘솔에서 구분할 수 있어야 한다.
+    function applyAutoHideout(state, reason) {
 
         log('UI', `auto hideout ${state ? 'ON' : 'OFF'}`
             + (reason ? ` — ${reason}` : ''));
 
         autoHideoutArmed = state;
 
-        // 수동으로 끄면 대기 중이거나 예약된 텔레포트도 함께 취소한다.
+        // 끄면 대기 중이거나 예약된 텔레포트도 함께 취소한다.
+        // 다른 탭이 껐을 때도 이 경로를 타므로 예약된 클릭이 확실히 취소된다.
         if (!state) cancelHideout();
 
         hideoutBtn.textContent = state ? 'AUTO HO ON' : 'AUTO HO OFF';
 
         hideoutBtn.style.background =
             state ? '#f39c12' : '#555';
+
+    }
+
+    // 이 탭에 적용하고 다른 탭에도 전파한다. 사용자 조작과 자동 해제가 쓰는 쪽.
+    function setAutoHideout(state, reason) {
+
+        applyAutoHideout(state, reason);
+
+        lsWrite(LS_ARMED, state ? '1' : '0');
 
     }
 
@@ -305,7 +401,35 @@ Last Teleport: ${fmt(lastTeleport)}`;
 
     }
 
+    // 쿨다운 기준 시각. 다른 탭의 이동까지 포함해야 하므로 저장소를 함께 본다.
+    // 저장소를 못 읽는 환경에서도 이 탭의 쿨다운은 유지된다.
+    function getLastTeleportMs() {
+
+        const shared = readSharedTeleportMs();
+        const local = lastTeleport ? lastTeleport.getTime() : null;
+
+        if (shared === null) return local;
+        if (local === null) return shared;
+
+        return Math.max(shared, local);
+
+    }
+
+    // 남은 쿨다운(ms). 0 이면 발동 가능.
+    function hideoutCooldownRemaining() {
+
+        const last = getLastTeleportMs();
+
+        if (last === null) return 0;
+
+        const elapsed = Date.now() - last;
+
+        return elapsed >= COOLDOWN_MS ? 0 : COOLDOWN_MS - elapsed;
+
+    }
+
     // 쿨다운: 마지막 실제 텔레포트로부터 COOLDOWN_MS 가 지나야 다시 발동한다.
+    // 어느 탭에서 이동했는지는 상관없다.
     function canTriggerHideout(itemId) {
 
         if (hideoutPending) {
@@ -315,19 +439,15 @@ Last Teleport: ${fmt(lastTeleport)}`;
 
         }
 
-        if (lastTeleport) {
+        const remaining = hideoutCooldownRemaining();
 
-            const elapsed = Date.now() - lastTeleport.getTime();
+        if (remaining > 0) {
 
-            if (elapsed < COOLDOWN_MS) {
+            log('HIDEOUT',
+                `skip: 쿨다운 ${Math.ceil(remaining / 1000)}s 남음 (탭 공유)`
+                + ` id=${shortId(itemId)}`);
 
-                log('HIDEOUT',
-                    `skip: 쿨다운 ${Math.ceil((COOLDOWN_MS - elapsed) / 1000)}s 남음`
-                    + ` id=${shortId(itemId)}`);
-
-                return false;
-
-            }
+            return false;
 
         }
 
@@ -347,6 +467,20 @@ Last Teleport: ${fmt(lastTeleport)}`;
 
             // 클릭이 나가면 이후 억제는 lastTeleport 기반 쿨다운이 담당한다.
             hideoutPending = false;
+
+            // 예약과 실행 사이(최대 randomDelay)에 다른 탭이 이동했을 수 있다.
+            // canTriggerHideout 은 예약 시점에만 봤으므로 여기서 한 번 더 본다.
+            const remaining = hideoutCooldownRemaining();
+
+            if (remaining > 0) {
+
+                log('HIDEOUT',
+                    `click 취소: 그 사이 다른 탭이 이동함`
+                    + ` (쿨다운 ${Math.ceil(remaining / 1000)}s 남음) id=${shortId(itemId)}`);
+
+                return;
+
+            }
 
             simulateHumanClick(btn, itemId);
 
@@ -475,6 +609,9 @@ Last Teleport: ${fmt(lastTeleport)}`;
         // 실제로 클릭이 나간 시점만 텔레포트로 기록한다.
         lastTeleport = new Date();
         updateStatus('Teleported');
+
+        // 다른 탭도 같은 쿨다운을 적용해야 한다.
+        lsWrite(LS_LAST_TELEPORT, String(lastTeleport.getTime()));
 
         // 이동에 성공했으면 여기서 멈춘다. 실패 경로에서는 해제하지 않는다
         // (클릭이 안 나갔으므로 이동도 없었고, 다음 매물에서 다시 시도해야 한다).
@@ -949,6 +1086,68 @@ Last Teleport: ${fmt(lastTeleport)}`;
 
 
     /*********************************************************
+     * 탭 간 동기화
+     *********************************************************/
+    // storage 이벤트는 값을 바꾼 탭에는 오지 않는다. 즉 여기 도달한 변경은
+    // 전부 다른 탭이 만든 것이므로, 되쏘지 않도록 applyAutoHideout 만 쓴다.
+    function onSharedStateChanged(e) {
+
+        if (!e || e.storageArea !== localStorage) return;
+
+        // localStorage.clear() 는 key 를 null 로 준다. 전체를 다시 읽어 맞춘다.
+        if (e.key === null) {
+
+            const armed = readSharedArmed();
+
+            if (armed !== null && armed !== autoHideoutArmed) {
+                applyAutoHideout(armed, '다른 탭에서 저장소 초기화');
+            }
+
+            return;
+
+        }
+
+        if (e.key === LS_ARMED) {
+
+            const next = e.newValue === '1';
+
+            // 같은 값이면 로그도 남기지 않는다. 탭이 많을 때 콘솔이 시끄러워진다.
+            if (next === autoHideoutArmed) return;
+
+            applyAutoHideout(next, '다른 탭에서 변경');
+
+            return;
+
+        }
+
+        if (e.key === LS_LAST_TELEPORT) {
+
+            const ms = Number(e.newValue);
+
+            if (!Number.isFinite(ms)) return;
+
+            // 표시도 함께 맞춘다. 쿨다운은 getLastTeleportMs 가 저장소를 직접
+            // 보므로 이 대입 없이도 동작하지만, 오버레이의 Last Teleport 가
+            // 자기 탭 이동만 보여주면 왜 막혔는지 알 수 없다.
+            if (!lastTeleport || ms > lastTeleport.getTime()) {
+
+                lastTeleport = new Date(ms);
+                updateStatus();
+
+                log('SYNC', `다른 탭이 이동함 — 쿨다운 ${COOLDOWN_MS / 1000}s 공유`);
+
+            }
+
+            return;
+
+        }
+
+    }
+
+    window.addEventListener('storage', onSharedStateChanged);
+
+
+    /*********************************************************
      * 시작
      *********************************************************/
     try {
@@ -957,7 +1156,21 @@ Last Teleport: ${fmt(lastTeleport)}`;
 
         checkServerAliveOnce();
 
-        setAutoHideout(false, '초기화');
+        // 다른 탭이 이미 무장돼 있으면 그 상태를 따라간다.
+        // 무조건 OFF 로 쓰면 새 탭을 열 때마다 전체가 꺼진다.
+        const sharedArmed = readSharedArmed();
+
+        applyAutoHideout(
+            sharedArmed === true,
+            sharedArmed === null ? '초기화' : '다른 탭 상태 적용'
+        );
+
+        // 다른 탭의 이동을 오버레이에 반영한다 (쿨다운은 이미 공유 상태다).
+        const sharedTeleportMs = readSharedTeleportMs();
+
+        if (sharedTeleportMs !== null) lastTeleport = new Date(sharedTeleportMs);
+
+        updateStatus();
 
         log('INIT', `ready (v${version})`);
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-06-17-001
-// @description  POE2 live search alert & auto hideout
+// @version      2026-08-04-001
+// @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
 // @run-at       document-idle
@@ -17,19 +17,30 @@
     /*********************************************************
      * 상태
      *********************************************************/
-    const version = '2026-06-17-001';
-    let enabled = true;
-    let lastTeleport = null;
+    // @version 헤더를 단일 출처로 삼는다. GM_info 가 없는 환경만 뒤의 값으로 폴백.
+    const version =
+        (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version)
+        || 'unknown';
+
+    let lastTeleport = null;   // 실제 hideout 클릭 시각
+    let lastAlert = null;      // 마지막 알림 시각
 
     let autoHideoutArmed = false;
-    let autoHideoutTriggered = false;
+
+    // 텔레포트가 진행 중(버튼 대기 또는 클릭 예약)인지. 트리거가 연달아 와도 클릭이 중첩되지 않게 막는다.
+    let hideoutPending = false;
 
     const usedItemIds = new Set();
-    let lastWhisperResult = null;
     let serverAlive = false;
 
     const COOLDOWN_MS = 30_000;
     const MAX_ITEM_AGE_MS = 60_000;
+
+    // usedItemIds 무한 증가 방지: 상한 초과 시 가장 오래된 항목부터 버린다.
+    const MAX_USED_IDS = 1000;
+
+    // hideout 버튼을 이 시간까지 못 찾으면 관찰을 포기한다.
+    const HIDEOUT_WAIT_TIMEOUT_MS = 15_000;
 
 
     /*********************************************************
@@ -100,7 +111,9 @@ border-radius:4px;
         console.log('[POE] setAutoHideout ', state);
 
         autoHideoutArmed = state;
-        autoHideoutTriggered = false;
+
+        // 수동으로 끄면 대기 중이거나 예약된 텔레포트도 함께 취소한다.
+        if (!state) cancelHideout();
 
         hideoutBtn.textContent = state ? 'AUTO HO ON' : 'AUTO HO OFF';
 
@@ -113,17 +126,21 @@ border-radius:4px;
     /*********************************************************
      * 상태 표시
      *********************************************************/
+    // 서버 헬스체크 콜백이 'Notified' 를 즉시 덮어쓰지 않도록 마지막 상태를 기억한다.
+    let statusText = 'Running';
+
     function updateStatus(text) {
 
-        const last = lastTeleport ?
-            lastTeleport.toLocaleTimeString() :
-            'None';
+        if (text !== undefined) statusText = text;
+
+        const fmt = (d) => d ? d.toLocaleTimeString() : 'None';
 
         status.textContent =
             `Version: ${version}
-Status: ${text}
+Status: ${statusText}
 Server: ${serverAlive ? 'ON':'OFF'}
-Last Teleport: ${last}`;
+Last Alert: ${fmt(lastAlert)}
+Last Teleport: ${fmt(lastTeleport)}`;
 
     }
 
@@ -133,32 +150,97 @@ Last Teleport: ${last}`;
     /*********************************************************
      * hideout 클릭
      *********************************************************/
-    function clickLastHideoutButton() {
+    const HIDEOUT_BTN_SELECTOR = 'button.btn.btn-xs.btn-default.direct-btn';
 
-        const buttons = document.querySelectorAll(
-            'button.btn.btn-xs.btn-default.direct-btn'
-        );
+    // 한/영 UI 모두 지원. live search 는 최신 매물이 위에 쌓이므로 화면상 가장 위 버튼을 고른다.
+    function findHideoutButton() {
 
-        if (!buttons.length) {
-            console.log('[POE] not found button.btn.btn-xs.btn-default.direct-btn');
-            return;
+        const matches = [...document.querySelectorAll(HIDEOUT_BTN_SELECTOR)]
+            .filter(b => {
+                const text = b.textContent || '';
+                return text.toLowerCase().includes('hideout')
+                    || text.includes('은신처');
+            });
+
+        if (!matches.length) return null;
+
+        return matches.sort(
+            (a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top
+        )[0];
+
+    }
+
+    let hideoutObserver = null;
+    let hideoutWaitTimeoutId = null;
+    let hideoutClickTimeoutId = null;
+
+    // 버튼 탐색만 중단한다 (관찰자 + 탐색 타임아웃).
+    function stopWaitingForHideout() {
+
+        if (hideoutObserver) {
+            hideoutObserver.disconnect();
+            hideoutObserver = null;
         }
 
-        const btn = [...buttons]
-            .filter(b => (b.textContent.includes("Hideout") || b.textContent.includes("은신처")))
-            .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0];
+        if (hideoutWaitTimeoutId !== null) {
+            clearTimeout(hideoutWaitTimeoutId);
+            hideoutWaitTimeoutId = null;
+        }
 
-        if (!btn.textContent.toLowerCase().includes("hideout")) return;
+    }
+
+    // 진행 중인 텔레포트 자체를 취소한다 (예약된 클릭까지 포함).
+    function cancelHideout() {
+
+        stopWaitingForHideout();
+
+        if (hideoutClickTimeoutId !== null) {
+            clearTimeout(hideoutClickTimeoutId);
+            hideoutClickTimeoutId = null;
+        }
+
+        hideoutPending = false;
+
+    }
+
+    // 쿨다운: 마지막 실제 텔레포트로부터 COOLDOWN_MS 가 지나야 다시 발동한다.
+    function canTriggerHideout() {
+
+        if (hideoutPending) {
+            console.log('[POE] hideout already pending — skip');
+            return false;
+        }
+
+        if (lastTeleport) {
+
+            const elapsed = Date.now() - lastTeleport.getTime();
+
+            if (elapsed < COOLDOWN_MS) {
+                console.log('[POE] hideout cooldown',
+                            Math.ceil((COOLDOWN_MS - elapsed) / 1000), 's left');
+                return false;
+            }
+
+        }
+
+        return true;
+
+    }
+
+    function clickHideoutButton(btn) {
 
         const delay = randomDelay();
 
         console.log('[POE] hideout delay', delay);
 
-        setTimeout(() => {
+        hideoutClickTimeoutId = setTimeout(() => {
 
-            console.log('[POE] button click!!');
+            hideoutClickTimeoutId = null;
+
+            // 클릭이 나가면 이후 억제는 lastTeleport 기반 쿨다운이 담당한다.
+            hideoutPending = false;
+
             simulateHumanClick(btn);
-            //btn.click();
 
         }, delay);
 
@@ -166,36 +248,49 @@ Last Teleport: ${last}`;
 
     function waitForHideoutButton() {
 
-        console.log("[POE] waiting hideout button...");
+        // 이전 대기가 남아 있으면 정리한다 (관찰자 중복 방지).
+        stopWaitingForHideout();
 
-        const observer = new MutationObserver((mutations) => {
+        hideoutPending = true;
 
-            const btn = [...document.querySelectorAll(
-                'button.btn.btn-xs.btn-default.direct-btn'
-            )].find(b => (b.textContent.toLowerCase().includes("hideout") || b.textContent.includes("은신처")));
+        // 버튼이 이미 떠 있으면 MutationObserver 는 발화하지 않으므로 먼저 확인한다.
+        const existing = findHideoutButton();
+
+        if (existing) {
+            console.log('[POE] hideout button already present');
+            clickHideoutButton(existing);
+            return;
+        }
+
+        console.log('[POE] waiting hideout button...');
+
+        hideoutObserver = new MutationObserver(() => {
+
+            const btn = findHideoutButton();
 
             if (!btn) return;
 
-            console.log("[POE] hideout button detected");
+            console.log('[POE] hideout button detected');
 
-            observer.disconnect();
-
-            const delay = randomDelay();
-
-            console.log("[POE] hideout delay", delay);
-
-            setTimeout(() => {
-
-                simulateHumanClick(btn);
-
-            }, delay);
+            stopWaitingForHideout();
+            clickHideoutButton(btn);
 
         });
 
-        observer.observe(document.body, {
+        hideoutObserver.observe(document.body, {
             childList: true,
             subtree: true
         });
+
+        // 끝내 안 나타나면 포기한다. 없으면 페이지가 살아 있는 동안 body 전체를 계속 관찰한다.
+        hideoutWaitTimeoutId = setTimeout(() => {
+
+            console.warn('[POE] hideout button not found — giving up');
+
+            cancelHideout();
+            updateStatus('HO timeout');
+
+        }, HIDEOUT_WAIT_TIMEOUT_MS);
 
     }
 
@@ -230,6 +325,10 @@ Last Teleport: ${last}`;
         element.dispatchEvent(new MouseEvent("click", eventOptions));
 
         console.log("[POE] button click done!");
+
+        // 실제로 클릭이 나간 시점만 텔레포트로 기록한다.
+        lastTeleport = new Date();
+        updateStatus('Teleported');
     }
 
 
@@ -294,7 +393,7 @@ Last Teleport: ${last}`;
             if (!finished) {
 
                 serverAlive = false;
-                updateStatus('Running');
+                updateStatus();   // 서버 표시만 갱신, Status 문구는 유지
 
             }
 
@@ -311,7 +410,7 @@ Last Teleport: ${last}`;
                 clearTimeout(timeout);
 
                 serverAlive = true;
-                updateStatus('Running');
+                updateStatus();   // 서버 표시만 갱신, Status 문구는 유지
 
                 GM_xmlhttpRequest({
 
@@ -332,7 +431,7 @@ Last Teleport: ${last}`;
                 clearTimeout(timeout);
 
                 serverAlive = false;
-                updateStatus('Running');
+                updateStatus();   // 서버 표시만 갱신, Status 문구는 유지
 
             }
 
@@ -354,18 +453,35 @@ Last Teleport: ${last}`;
             onload: () => {
 
                 serverAlive = true;
-                updateStatus('Running');
+                updateStatus();   // 서버 표시만 갱신, Status 문구는 유지
 
             },
 
             onerror: () => {
 
                 serverAlive = false;
-                updateStatus('Running');
+                updateStatus();   // 서버 표시만 갱신, Status 문구는 유지
 
             }
 
         });
+
+    }
+
+    // Set 은 삽입 순서를 유지하므로, 상한을 넘으면 앞쪽(가장 오래된)부터 버린다.
+    function rememberItemId(id) {
+
+        usedItemIds.add(id);
+
+        if (usedItemIds.size <= MAX_USED_IDS) return;
+
+        const overflow = usedItemIds.size - MAX_USED_IDS;
+        let removed = 0;
+
+        for (const old of usedItemIds) {
+            usedItemIds.delete(old);
+            if (++removed >= overflow) break;
+        }
 
     }
 
@@ -388,17 +504,16 @@ Last Teleport: ${last}`;
 
                 if (age > MAX_ITEM_AGE_MS) continue;
 
-                usedItemIds.add(id);
+                rememberItemId(id);
 
                 console.log(`[POE][${source}] trigger`, id);
 
                 /**********************
                  * AUTO HIDEOUT
                  **********************/
-                if (autoHideoutArmed && !autoHideoutTriggered) {
+                // 무장 상태를 유지한 채 쿨다운으로만 억제한다 (1회성 아님).
+                if (autoHideoutArmed && canTriggerHideout()) {
 
-                    autoHideoutTriggered = true;
-                    setAutoHideout(false);
                     waitForHideoutButton();
 
                 }
@@ -416,7 +531,7 @@ Last Teleport: ${last}`;
                     price: priceText
                 });
 
-                lastTeleport = new Date();
+                lastAlert = new Date();
 
                 updateStatus('Notified');
 
@@ -445,14 +560,20 @@ Last Teleport: ${last}`;
 
                 const url = this.url || '';
 
-                if (url.includes('/api/trade2/fetch')) {
+                // POE2 는 /api/trade2/fetch, POE1 은 /api/trade/fetch 를 쓴다.
+                // @match 에 두 게임이 다 들어 있으므로 양쪽을 받는다.
+                const m = url.match(/\/api\/(trade2?)\/fetch/);
+
+                if (m) {
+
+                    const game = m[1] === 'trade2' ? 'POE2' : 'POE1';
 
                     console.log('[POE][JSON] trade response detected');
                     console.log('[POE][JSON] URL:', url);
                     console.log('[POE][JSON] result count:',
                                 result?.result?.length || 0);
 
-                    processTradeResults(result, 'JSON');
+                    processTradeResults(result, game);
                 }
 
             } catch (e) {

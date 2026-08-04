@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-04-005
+// @version      2026-08-04-006
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -41,6 +41,12 @@
 
     // hideout 버튼을 이 시간까지 못 찾으면 관찰을 포기한다.
     const HIDEOUT_WAIT_TIMEOUT_MS = 15_000;
+
+    // 이동 1회 성공 후 자동으로 무장을 해제한다.
+    // 쿨다운(COOLDOWN_MS)은 간격만 벌리므로, 무장을 켜 둔 채 자리를 비우면
+    // 매물이 뜰 때마다 계속 이동한다. 무장 해제가 그걸 끊는 유일한 정지점이다.
+    // 연속 이동을 원하면 false 로 두고 쿨다운에만 의존한다.
+    const DISARM_AFTER_TELEPORT = true;
 
     const SERVER_BASE = 'http://127.0.0.1:5001';
 
@@ -162,13 +168,16 @@ border-radius:4px;
      *********************************************************/
     hideoutBtn.onclick = () => {
 
-        setAutoHideout(!autoHideoutArmed);
+        setAutoHideout(!autoHideoutArmed, '버튼 클릭');
 
     };
 
-    function setAutoHideout(state) {
+    // reason 은 왜 상태가 바뀌었는지 한 줄에 함께 남기기 위한 것이다.
+    // 자동 해제와 수동 토글을 콘솔에서 구분할 수 있어야 한다.
+    function setAutoHideout(state, reason) {
 
-        log('UI', `auto hideout ${state ? 'ON' : 'OFF'}`);
+        log('UI', `auto hideout ${state ? 'ON' : 'OFF'}`
+            + (reason ? ` — ${reason}` : ''));
 
         autoHideoutArmed = state;
 
@@ -466,6 +475,14 @@ Last Teleport: ${fmt(lastTeleport)}`;
         // 실제로 클릭이 나간 시점만 텔레포트로 기록한다.
         lastTeleport = new Date();
         updateStatus('Teleported');
+
+        // 이동에 성공했으면 여기서 멈춘다. 실패 경로에서는 해제하지 않는다
+        // (클릭이 안 나갔으므로 이동도 없었고, 다음 매물에서 다시 시도해야 한다).
+        if (DISARM_AFTER_TELEPORT && autoHideoutArmed) {
+
+            setAutoHideout(false, `이동 1회 완료 후 자동 해제 id=${shortId(itemId)}`);
+
+        }
 
     }
 
@@ -839,7 +856,8 @@ Last Teleport: ${fmt(lastTeleport)}`;
                 /**********************
                  * AUTO HIDEOUT
                  **********************/
-                // 무장 상태를 유지한 채 쿨다운으로만 억제한다 (1회성 아님).
+                // 억제는 3단계다: 무장 여부 → hideoutPending → 쿨다운.
+                // 이동에 성공하면 simulateHumanClick 이 무장을 해제하므로 여기서 끊긴다.
                 if (autoHideoutArmed && canTriggerHideout(id)) {
 
                     waitForHideoutButton(id);
@@ -939,7 +957,7 @@ Last Teleport: ${fmt(lastTeleport)}`;
 
         checkServerAliveOnce();
 
-        setAutoHideout(false);
+        setAutoHideout(false, '초기화');
 
         log('INIT', `ready (v${version})`);
 

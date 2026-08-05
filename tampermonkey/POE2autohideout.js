@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-012
+// @version      2026-08-05-013
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -262,23 +262,35 @@
      * 색은 어두운 유리판에 상태색 세 개(호박/초록/빨강)만 쓴다.
      * 클래스명은 테스트가 노드를 찾는 손잡이다 (생성 순서에 기대지 않게).
      *********************************************************/
+    // 거래소 배경이 거의 검정이라, 어두운 유리판은 배경에 먹혀 보이지 않는다.
+    // 그래서 패널을 배경보다 "밝게" 띄운다. 카드는 밝은 회청색, 그 안의 비활성
+    // 버튼은 오히려 더 어둡게 파서 깊이를 만든다 — 명도 차가 곧 경계선이다.
     const C = {
-        text: '#e6e8ec',
-        muted: '#7f8794',
-        faint: '#5d646f',
+        text: '#eef1f5',
+        muted: '#a2abb9',
+        faint: '#6f7887',
         amber: '#f0a020',
-        green: '#3fb950',
-        red: '#f85149'
+        green: '#4ac25e',
+        red: '#ff6b60'
     };
 
     const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,'
         + ' "Helvetica Neue", Arial, sans-serif';
 
-    const CARD_BG = 'rgba(18, 20, 26, 0.92)';
-    const CARD_BORDER = '1px solid rgba(255, 255, 255, 0.10)';
-    const CARD_SHADOW = '0 8px 28px rgba(0, 0, 0, 0.45)';
-    const GLOW_BORDER = '1px solid rgba(240, 160, 32, 0.45)';
-    const GLOW_SHADOW = CARD_SHADOW + ', 0 0 0 1px rgba(240, 160, 32, 0.18)';
+    const CARD_BG = 'rgba(38, 44, 56, 0.97)';          // 배경보다 밝다
+    const CARD_BORDER = '1px solid rgba(255, 255, 255, 0.22)';
+    const WELL_BG = '#13161d';                          // 카드보다 어두운 홈
+    const WELL_BORDER = '1px solid rgba(255, 255, 255, 0.14)';
+
+    // 검정 위에서는 그림자가 안 보인다. 바깥으로 밝은 테를 한 겹 둘러
+    // 카드 경계를 만든다.
+    const CARD_SHADOW = '0 10px 30px rgba(0, 0, 0, 0.7),'
+        + ' 0 0 0 1px rgba(255, 255, 255, 0.06)';
+
+    const GLOW_BORDER = '1px solid rgba(247, 187, 82, 0.75)';
+    const GLOW_SHADOW = '0 10px 30px rgba(0, 0, 0, 0.7),'
+        + ' 0 0 0 1px rgba(240, 160, 32, 0.35),'
+        + ' 0 0 18px rgba(240, 160, 32, 0.20)';
 
     // 상세 접힘 여부와 위치. 탭을 새로 열어도 같은 자리에 있어야 하므로 저장한다.
     const LS_UI = 'poeAutoHideout.ui';   // {c:상세 접힘, r:right px, b:bottom px}
@@ -346,21 +358,21 @@ user-select: none;
 
     panel.style.cssText = `
 box-sizing: border-box;
-width: 236px;
-padding: 12px;
+width: 216px;
+padding: 10px;
 background: ${CARD_BG};
 backdrop-filter: blur(10px);
 -webkit-backdrop-filter: blur(10px);
 border: ${CARD_BORDER};
 border-radius: 12px;
 box-shadow: ${CARD_SHADOW};
-opacity: 0.94;
-transition: opacity .15s ease, box-shadow .25s ease, border-color .25s ease;
+opacity: 1;
+transition: box-shadow .25s ease, border-color .25s ease;
 `;
 
     // 평소엔 한 발 물러나 있다가 볼 때만 또렷해진다.
-    overlay.onmouseenter = () => { panel.style.opacity = '1'; };
-    overlay.onmouseleave = () => { panel.style.opacity = '0.94'; };
+    // 예전엔 평소 흐렸다가 마우스를 올리면 또렷해졌다. 검정 배경 위에서는
+    // 그 흐림이 곧 "안 보임" 이라 없앤다 — 대신 자리를 옮길 수 있게 해뒀다.
 
     // 버튼 두 개가 무엇을 켜고 끄는지는 여기서 한 번만 말한다.
     // 버튼마다 "자동이동" 을 붙이면 두 번 읽히고 폭만 잡아먹는다.
@@ -382,19 +394,30 @@ letter-spacing: 0.6px;
 
     hideoutBtn.className = 'poe-ho-btn';
 
-    hideoutBtn.textContent = '모든 탭 사용 OFF';
+    hideoutBtn.textContent = '모든 탭 OFF';
 
-    // 원격 화면에서 손가락으로 누른다. 표적이 작으면 조준이 노동이 된다.
-    hideoutBtn.style.cssText = `
-display: block;
-box-sizing: border-box;
-width: 100%;
+    // 두 스위치는 한 줄에 반씩 나눠 선다. 세로로 쌓으면 카드가 그만큼 길어지고,
+    // 길어진 카드는 결국 가리는 면적이다. 높이(padding)는 줄이지 않는다 —
+    // 원격 화면에서 손가락으로 누르는 물건이라 세로 여유가 조준을 좌우한다.
+    const switchRow = document.createElement('div');
+
+    switchRow.style.cssText = `
+display: flex;
+gap: 6px;
 margin: 0 0 6px;
-padding: 11px 12px;
+`;
+
+    hideoutBtn.style.cssText = `
+flex: 1 1 0;
+min-width: 0;
+box-sizing: border-box;
+padding: 11px 4px;
 font-family: inherit;
-font-size: 12px;
+font-size: 11.5px;
 font-weight: 700;
-letter-spacing: 0.8px;
+letter-spacing: 0.2px;
+text-align: center;
+white-space: nowrap;
 cursor: pointer;
 border: none;
 border-radius: 8px;
@@ -407,20 +430,20 @@ transition: background .15s ease, color .15s ease, box-shadow .15s ease;
 
     tabBtn.className = 'poe-tab-btn';
 
-    tabBtn.textContent = '이 탭 사용 ON';
+    tabBtn.textContent = '이 탭 ON';
 
     tabBtn.style.cssText = `
-display: block;
+flex: 1 1 0;
+min-width: 0;
 box-sizing: border-box;
-width: 100%;
-margin: 0 0 6px;
-padding: 10px 12px;
+padding: 11px 4px;
 font-family: inherit;
 font-size: 11.5px;
 font-weight: 700;
-letter-spacing: 0.4px;
+letter-spacing: 0.2px;
+text-align: center;
+white-space: nowrap;
 cursor: pointer;
-background: transparent;
 border-radius: 8px;
 transition: background .15s ease, color .15s ease, border-color .15s ease;
 `;
@@ -436,7 +459,7 @@ display: block;
 box-sizing: border-box;
 width: 100%;
 margin: 0;
-padding: 9px 12px;
+padding: 8px 10px;
 font-family: inherit;
 font-size: 10.5px;
 font-weight: 600;
@@ -513,7 +536,7 @@ text-overflow: ellipsis;
     footer.style.cssText = `
 margin-top: 8px;
 padding-top: 7px;
-border-top: 1px solid rgba(255, 255, 255, 0.07);
+border-top: 1px solid rgba(255, 255, 255, 0.12);
 color: ${C.faint};
 font-size: 9px;
 letter-spacing: 0.3px;
@@ -523,9 +546,11 @@ text-align: right;
     details.appendChild(grid);
     details.appendChild(footer);
 
+    switchRow.appendChild(hideoutBtn);
+    switchRow.appendChild(tabBtn);
+
     panel.appendChild(caption);
-    panel.appendChild(hideoutBtn);
-    panel.appendChild(tabBtn);
+    panel.appendChild(switchRow);
     panel.appendChild(detailBtn);
     panel.appendChild(details);
 
@@ -619,12 +644,12 @@ text-align: right;
         detailBtn.style.color = blind ? C.red : C.muted;
 
         detailBtn.style.border = blind
-            ? '1px solid rgba(248, 81, 73, 0.45)'
-            : CARD_BORDER;
+            ? '1px solid rgba(255, 107, 96, 0.65)'
+            : WELL_BORDER;
 
         detailBtn.style.background = blind
-            ? 'rgba(248, 81, 73, 0.08)'
-            : 'transparent';
+            ? 'rgba(255, 107, 96, 0.14)'
+            : WELL_BG;
 
     }
 
@@ -746,8 +771,7 @@ text-align: right;
 
         const active = hideoutActive();
 
-        hideoutBtn.textContent =
-            autoHideoutArmed ? '모든 탭 사용 ON' : '모든 탭 사용 OFF';
+        hideoutBtn.textContent = autoHideoutArmed ? '모든 탭 ON' : '모든 탭 OFF';
 
         // 상위 스위치는 어떤 조합에서도 흐려지지 않는다. 전역 상태를 있는 그대로.
         hideoutBtn.style.opacity = '1';
@@ -761,25 +785,25 @@ text-align: right;
 
         } else {
 
-            hideoutBtn.style.background = '#262a33';
+            hideoutBtn.style.background = WELL_BG;
             hideoutBtn.style.color = C.muted;
-            hideoutBtn.style.boxShadow = 'none';
+            hideoutBtn.style.boxShadow = 'inset 0 0 0 1px rgba(255, 255, 255, 0.14)';
 
         }
 
-        tabBtn.textContent = tabEnabled ? '이 탭 사용 ON' : '이 탭 사용 OFF';
+        tabBtn.textContent = tabEnabled ? '이 탭 ON' : '이 탭 OFF';
 
         if (tabEnabled) {
 
-            tabBtn.style.border = '1px solid rgba(255, 255, 255, 0.10)';
-            tabBtn.style.color = C.muted;
-            tabBtn.style.background = 'transparent';
+            tabBtn.style.border = WELL_BORDER;
+            tabBtn.style.color = C.text;
+            tabBtn.style.background = WELL_BG;
 
         } else {
 
-            tabBtn.style.border = '1px solid rgba(248, 81, 73, 0.45)';
+            tabBtn.style.border = '1px solid rgba(255, 107, 96, 0.65)';
             tabBtn.style.color = C.red;
-            tabBtn.style.background = 'rgba(248, 81, 73, 0.08)';
+            tabBtn.style.background = 'rgba(255, 107, 96, 0.14)';
 
         }
 

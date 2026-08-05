@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-018
+// @version      2026-08-05-019
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -400,63 +400,127 @@ font-weight: 600;
 letter-spacing: 0.6px;
 `;
 
-    const hideoutBtn = document.createElement('button');
+    /*****
+     * 토글 스위치
+     *
+     * 예전에는 그냥 버튼에 "모든 탭 ON" 이라고 적었다. 그 글자가 지금 상태인지
+     * 누르면 될 상태인지 알 수 없다는 게 문제였다. 버튼 라벨로는 이 모호함을
+     * 못 없앤다 — "켜기" 라고 쓰면 지금 꺼진 건지 알 수 없고, "켜짐" 이라고
+     * 쓰면 눌러도 되는 물건인지 알 수 없다.
+     *
+     * 스위치는 위치가 곧 상태다. 손잡이가 오른쪽에 있으면 켜진 것이고, 그걸
+     * 미는 게 조작이다. 글자에 기대지 않으므로 헷갈릴 여지가 없다.
+     * 그래도 ON/OFF 를 함께 적는다 — 색과 위치만으로 읽히지 않는 사람도 있고,
+     * 원격 화면에서는 손잡이 위치가 뭉개져 보일 수 있다.
+     *
+     * 누르는 곳은 손잡이가 아니라 줄 전체다. 작은 손잡이를 조준하게 만들면
+     * 스위치로 바꾼 보람이 없다.
+     *****/
+    function makeSwitch(key, labelText) {
 
-    hideoutBtn.className = 'poe-ho-btn';
+        const row = document.createElement('div');
 
-    hideoutBtn.textContent = '모든 탭 OFF';
+        row.className = `poe-switch-${key}`;
 
-    // 두 스위치는 한 줄에 반씩 나눠 선다. 세로로 쌓으면 카드가 그만큼 길어지고,
-    // 길어진 카드는 결국 가리는 면적이다. 높이(padding)는 줄이지 않는다 —
-    // 원격 화면에서 손가락으로 누르는 물건이라 세로 여유가 조준을 좌우한다.
-    const switchRow = document.createElement('div');
-
-    switchRow.style.cssText = `
+        row.style.cssText = `
 display: flex;
-gap: 6px;
+align-items: center;
+justify-content: space-between;
+gap: 8px;
+box-sizing: border-box;
+width: 100%;
 margin: 0 0 6px;
+padding: 8px 10px;
+border-radius: 8px;
+cursor: pointer;
+transition: background .15s ease, border-color .15s ease, opacity .15s ease;
 `;
 
-    hideoutBtn.style.cssText = `
-flex: 1 1 0;
-min-width: 0;
-box-sizing: border-box;
-padding: 11px 4px;
-font-family: inherit;
+        const label = document.createElement('div');
+
+        label.textContent = labelText;
+
+        label.style.cssText = `
 font-size: 11.5px;
 font-weight: 700;
 letter-spacing: 0.2px;
-text-align: center;
 white-space: nowrap;
-cursor: pointer;
-border: none;
-border-radius: 8px;
-transition: background .15s ease, color .15s ease, box-shadow .15s ease;
 `;
 
-    // 이 탭만 재우는 스위치. 상위 스위치보다 조용하게(테두리만) 두되 크기는
-    // 줄이지 않는다 — 조용한 것과 누르기 어려운 것은 다른 얘기다.
-    const tabBtn = document.createElement('button');
+        const right = document.createElement('div');
 
-    tabBtn.className = 'poe-tab-btn';
+        right.style.cssText = 'display: flex; align-items: center; gap: 8px;';
 
-    tabBtn.textContent = '이 탭 ON';
+        const state = document.createElement('div');
 
-    tabBtn.style.cssText = `
-flex: 1 1 0;
-min-width: 0;
-box-sizing: border-box;
-padding: 11px 4px;
-font-family: inherit;
-font-size: 11.5px;
+        state.className = `poe-state-${key}`;
+
+        state.style.cssText = `
+font-size: 10px;
 font-weight: 700;
-letter-spacing: 0.2px;
-text-align: center;
-white-space: nowrap;
-cursor: pointer;
-border-radius: 8px;
-transition: background .15s ease, color .15s ease, border-color .15s ease;
+letter-spacing: 0.5px;
+min-width: 26px;
+text-align: right;
 `;
+
+        const track = document.createElement('div');
+
+        track.className = `poe-track-${key}`;
+
+        track.style.cssText = `
+position: relative;
+flex: none;
+width: 38px;
+height: 22px;
+border-radius: 999px;
+transition: background .15s ease, box-shadow .15s ease;
+`;
+
+        const knob = document.createElement('div');
+
+        knob.className = `poe-knob-${key}`;
+
+        knob.style.cssText = `
+position: absolute;
+top: 3px;
+left: 3px;
+width: 16px;
+height: 16px;
+border-radius: 50%;
+background: #eef1f5;
+box-shadow: 0 1px 3px rgba(0, 0, 0, 0.55);
+transition: left .15s ease;
+`;
+
+        track.appendChild(knob);
+
+        right.appendChild(state);
+        right.appendChild(track);
+
+        row.appendChild(label);
+        row.appendChild(right);
+
+        return { row, label, state, track, knob };
+
+    }
+
+    // 손잡이 위치와 색을 한 번에 칠한다. on 이면 오른쪽 + 강조색.
+    function paintSwitch(sw, on, onColor, onTrack) {
+
+        sw.state.textContent = on ? 'ON' : 'OFF';
+        sw.state.style.color = on ? onColor : C.muted;
+
+        sw.knob.style.left = on ? '19px' : '3px';
+
+        sw.track.style.background = on ? onTrack : '#0d0f14';
+        sw.track.style.boxShadow = on
+            ? 'none'
+            : 'inset 0 0 0 1px rgba(255, 255, 255, 0.18)';
+
+    }
+
+    const allSw = makeSwitch('all', '모든 탭');
+    const tabSw = makeSwitch('tab', '이 탭');
 
     // 3단째. 아래 상세만 여닫는다. 이 버튼 자체는 상세 위에 고정이라
     // 열든 접든 자리가 안 움직인다 — 접으려고 누른 곳에 다른 게 오면 안 된다.
@@ -556,11 +620,9 @@ text-align: right;
     details.appendChild(grid);
     details.appendChild(footer);
 
-    switchRow.appendChild(hideoutBtn);
-    switchRow.appendChild(tabBtn);
-
     panel.appendChild(caption);
-    panel.appendChild(switchRow);
+    panel.appendChild(allSw.row);
+    panel.appendChild(tabSw.row);
     panel.appendChild(detailBtn);
     panel.appendChild(details);
 
@@ -601,7 +663,7 @@ text-align: right;
     /*********************************************************
      * 버튼 동작
      *********************************************************/
-    hideoutBtn.onclick = () => {
+    allSw.row.onclick = () => {
 
         if (swallowClickAfterDrag()) return;
 
@@ -609,7 +671,7 @@ text-align: right;
 
     };
 
-    tabBtn.onclick = () => {
+    tabSw.row.onclick = () => {
 
         if (swallowClickAfterDrag()) return;
 
@@ -813,45 +875,40 @@ text-align: right;
 
         const active = hideoutActive();
 
-        hideoutBtn.textContent = autoHideoutArmed ? '모든 탭 ON' : '모든 탭 OFF';
+        const well = wellBg();
 
-        // 상위 스위치는 어떤 조합에서도 흐려지지 않는다. 전역 상태를 있는 그대로.
-        hideoutBtn.style.opacity = '1';
+        // 상위 스위치. 어떤 조합에서도 흐려지지 않는다 — 전역 상태를 있는 그대로.
+        paintSwitch(allSw, autoHideoutArmed, C.amber,
+                    'linear-gradient(180deg, #f7bb52 0%, #e8961a 100%)');
 
-        if (autoHideoutArmed) {
+        allSw.row.style.background = well;
+        allSw.row.style.border = WELL_BORDER;
+        allSw.row.style.opacity = '1';
 
-            hideoutBtn.style.background =
-                'linear-gradient(180deg, #f7bb52 0%, #e8961a 100%)';
-            hideoutBtn.style.color = '#1a1206';
-            hideoutBtn.style.boxShadow = '0 2px 10px rgba(240, 160, 32, 0.30)';
-
-        } else {
-
-            hideoutBtn.style.background = wellBg();
-            hideoutBtn.style.color = C.muted;
-            hideoutBtn.style.boxShadow = 'inset 0 0 0 1px rgba(255, 255, 255, 0.14)';
-
-        }
-
-        tabBtn.textContent = tabEnabled ? '이 탭 ON' : '이 탭 OFF';
+        // 하위 스위치. 꺼져 있으면 빨강 — 회색으로 두면 "그냥 기본값" 처럼
+        // 보이는데, 이건 사용자가 일부러 이 탭만 빼둔 상태다.
+        paintSwitch(tabSw, tabEnabled, C.amber,
+                    'linear-gradient(180deg, #f7bb52 0%, #e8961a 100%)');
 
         if (tabEnabled) {
 
-            tabBtn.style.border = WELL_BORDER;
-            tabBtn.style.color = C.text;
-            tabBtn.style.background = wellBg();
+            tabSw.row.style.background = well;
+            tabSw.row.style.border = WELL_BORDER;
 
         } else {
 
-            tabBtn.style.border = '1px solid rgba(255, 107, 96, 0.65)';
-            tabBtn.style.color = C.red;
-            tabBtn.style.background = 'rgba(255, 107, 96, 0.14)';
+            tabSw.state.style.color = C.red;
+            tabSw.track.style.background = 'rgba(255, 107, 96, 0.22)';
+            tabSw.track.style.boxShadow =
+                'inset 0 0 0 1px rgba(255, 107, 96, 0.65)';
+            tabSw.row.style.background = 'rgba(255, 107, 96, 0.10)';
+            tabSw.row.style.border = '1px solid rgba(255, 107, 96, 0.45)';
 
         }
 
         // 모든 탭이 OFF 면 이 탭 스위치는 아무 일도 하지 않는다. 눌러도 되지만
         // (미리 꺼둘 수 있다) 지금은 결정권이 없다는 걸 흐림으로 말한다.
-        tabBtn.style.opacity = autoHideoutArmed ? '1' : '0.4';
+        tabSw.row.style.opacity = autoHideoutArmed ? '1' : '0.4';
 
         // 카드가 빛나는 건 "지금 여기서 실제로 이동한다" 는 뜻이어야 한다.
         // 모든 탭만 켜진 상태에서 빛나면 재워둔 탭이 작동 중인 것처럼 보인다.

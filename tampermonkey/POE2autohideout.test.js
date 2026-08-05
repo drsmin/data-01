@@ -254,8 +254,8 @@ function makeTab(name, store, clock, src = SRC, opts = {}) {
     tab.overlay = byClass('poe-overlay');
     tab.panel = byClass('poe-panel');
     tab.caption = byClass('poe-caption');
-    tab.btn = byClass('poe-ho-btn');
-    tab.tabBtn = byClass('poe-tab-btn');
+    tab.btn = byClass('poe-switch-all');
+    tab.tabBtn = byClass('poe-switch-tab');
     tab.detailBtn = byClass('poe-detail-btn');
     tab.details = byClass('poe-details');
 
@@ -291,10 +291,13 @@ function makeTab(name, store, clock, src = SRC, opts = {}) {
 
     tab.overlayAttached = () => bodyNode.attached === true;
 
-    tab.armedText = () => tab.btn.textContent;
-    tab.clickToggle = () => tab.btn.onclick();
+    // 스위치는 글자가 아니라 손잡이 위치가 상태다. 둘 다 볼 수 있게 열어둔다.
+    tab.armedText = () => byClass('poe-state-all').textContent;
+    tab.tabText = () => byClass('poe-state-tab').textContent;
 
-    tab.tabText = () => tab.tabBtn.textContent;
+    tab.knobAt = (key) => byClass(`poe-knob-${key}`).style.left;
+
+    tab.clickToggle = () => tab.btn.onclick();
     tab.clickTabToggle = () => tab.tabBtn.onclick();
 
     // 특정 id 의 결과 행이 이미 렌더링돼 있는 것처럼 만든다.
@@ -367,21 +370,21 @@ function section(title) {
 
     section('T1: A 에서 켜면 B 도 켜진다');
     A.clickToggle();
-    check('A ON', A.armedText(), '모든 탭 ON');
-    check('B ON (전파됨)', B.armedText(), '모든 탭 ON');
+    check('A ON', A.armedText(), 'ON');
+    check('B ON (전파됨)', B.armedText(), 'ON');
     check('저장소 armed', store.dump()[LS_ARMED], '1');
 
     section('T2: B 에서 끄면 A 도 꺼진다');
     B.clickToggle();
-    check('B OFF', B.armedText(), '모든 탭 OFF');
-    check('A OFF (전파됨)', A.armedText(), '모든 탭 OFF');
+    check('B OFF', B.armedText(), 'OFF');
+    check('A OFF (전파됨)', A.armedText(), 'OFF');
 
     section('T3: 켜둔 채로 새 탭을 열면 상태를 이어받고, 기존 탭을 끄지 않는다');
     A.clickToggle();                       // 다시 ON
     const C = makeTab('C', store, clock);
-    check('C 가 ON 으로 시작', C.armedText(), '모든 탭 ON');
-    check('A 는 여전히 ON', A.armedText(), '모든 탭 ON');
-    check('B 는 여전히 ON', B.armedText(), '모든 탭 ON');
+    check('C 가 ON 으로 시작', C.armedText(), 'ON');
+    check('A 는 여전히 ON', A.armedText(), 'ON');
+    check('B 는 여전히 ON', B.armedText(), 'ON');
 
     section('T4: A 가 이동하면 모든 탭이 꺼지고 쿨다운이 공유된다');
     const id1 = 'a'.repeat(64);
@@ -390,15 +393,15 @@ function section(title) {
     await A.feed(id1, new Date().toISOString());
     clock.flush();                         // 예약된 클릭 실행
     check('A 가 클릭 1회', A.clicks, [id1]);
-    check('A OFF (자동으로 꺼짐)', A.armedText(), '모든 탭 OFF');
-    check('B OFF (전파됨)', B.armedText(), '모든 탭 OFF');
-    check('C OFF (전파됨)', C.armedText(), '모든 탭 OFF');
+    check('A OFF (자동으로 꺼짐)', A.armedText(), 'OFF');
+    check('B OFF (전파됨)', B.armedText(), 'OFF');
+    check('C OFF (전파됨)', C.armedText(), 'OFF');
     check('저장소에 lastTeleport 기록',
           typeof store.dump()[LS_LAST_TELEPORT], 'string');
 
     section('T5: 쿨다운 중 다른 탭은 이동하지 않는다');
     B.clickToggle();                       // 모든 탭 다시 켜기
-    check('B ON', B.armedText(), '모든 탭 ON');
+    check('B ON', B.armedText(), 'ON');
     const id2 = 'b'.repeat(64);
     B.addRow(id2);
     B.livePush(id2);                       // 라이브 확인은 통과시키고 쿨다운만 남긴다
@@ -431,8 +434,8 @@ function section(title) {
     const E = makeTab('E', store2, clock2);
 
     D.clickToggle();
-    check('D ON', D.armedText(), '모든 탭 ON');
-    check('E ON', E.armedText(), '모든 탭 ON');
+    check('D ON', D.armedText(), 'ON');
+    check('E ON', E.armedText(), 'ON');
 
     const id3 = 'c'.repeat(64);
     D.addRow(id3);
@@ -476,8 +479,8 @@ function section(title) {
     const H = makeTab('H', store3, clock3, SRC_NO_DISARM);
 
     G.clickToggle();
-    check('G ON', G.armedText(), '모든 탭 ON');
-    check('H ON', H.armedText(), '모든 탭 ON');
+    check('G ON', G.armedText(), 'ON');
+    check('H ON', H.armedText(), 'ON');
 
     const id4 = 'd'.repeat(64);
     G.addRow(id4);
@@ -494,7 +497,7 @@ function section(title) {
 
     check('전체 클릭 합계 = 1', G.clicks.length + H.clicks.length, 1);
     check('둘 다 여전히 켜진 상태',
-          [G.armedText(), H.armedText()], ['모든 탭 ON', '모든 탭 ON']);
+          [G.armedText(), H.armedText()], ['ON', 'ON']);
     check('늦은 탭에 click 취소(쿨다운 재확인) 로그 있음',
           [...G.logs, ...H.logs].some(([, m]) =>
               m.includes('click 취소') && m.includes('다른 탭이 이동')),
@@ -512,9 +515,9 @@ function section(title) {
     };
 
     const F = makeTab('F', blockedStore, clock);
-    check('F 가 크래시 없이 초기화됨', F.armedText(), '모든 탭 OFF');
+    check('F 가 크래시 없이 초기화됨', F.armedText(), 'OFF');
     F.clickToggle();
-    check('F 수동 토글은 여전히 동작', F.armedText(), '모든 탭 ON');
+    check('F 수동 토글은 여전히 동작', F.armedText(), 'ON');
     check('F 에 공유 불가 경고 있음',
           F.logs.some(([lvl, m]) =>
               lvl === 'warn' && m.includes('localStorage') && m.includes('탭 간 공유')),
@@ -552,7 +555,7 @@ function section(title) {
     const S = makeTab('S', storeS, clockS);
 
     S.clickToggle();
-    check('S ON', S.armedText(), '모든 탭 ON');
+    check('S ON', S.armedText(), 'ON');
 
     const idSearch = '1'.repeat(64);
     S.addRow(idSearch);
@@ -561,7 +564,7 @@ function section(title) {
     clockS.flush();
 
     check('라이브 확인 없으면 클릭하지 않음', S.clicks, []);
-    check('스위치 유지 (꺼지지 않음)', S.armedText(), '모든 탭 ON');
+    check('스위치 유지 (꺼지지 않음)', S.armedText(), 'ON');
     check('소켓을 못 봤다는 이유가 남는다',
           S.logs.some(([, m]) =>
               m.includes('skip: 라이브 소켓을 하나도 못 봤다')), true);
@@ -577,7 +580,7 @@ function section(title) {
     clockS.flush();
 
     check('라이브 푸시는 클릭됨', S.clicks, [idLive]);
-    check('이동 후 자동으로 꺼짐', S.armedText(), '모든 탭 OFF');
+    check('이동 후 자동으로 꺼짐', S.armedText(), 'OFF');
     check('푸시 수신 로그 있음',
           S.logs.some(([, m]) => m.includes('[POE][LIVE] 푸시 1건')), true);
 
@@ -655,7 +658,7 @@ function section(title) {
 
     const Es = makeTab('Es', storeE, clockE, SRC, { noBody: true });
 
-    check('body 없이도 초기화됨', Es.armedText(), '모든 탭 OFF');
+    check('body 없이도 초기화됨', Es.armedText(), 'OFF');
     check('아직 오버레이는 안 붙었다', Es.overlayAttached(), false);
     check('오버레이 실패 오류를 남기지 않는다',
           Es.logs.some(([lvl]) => lvl === 'error'), false);
@@ -690,10 +693,14 @@ function section(title) {
     check('소켓을 잡으면 초록', U.value('live').style.color, '#4ac25e');
     check('소켓/푸시 개수 표시', U.value('live').textContent, '● 1 / 푸시 1');
 
-    // 작동 중이면 버튼뿐 아니라 카드 전체가 물든다 (곁눈질로 보이도록).
+    // 스위치는 손잡이 위치가 상태다. 글자만 바뀌고 손잡이가 안 움직이면
+    // 스위치로 바꾼 의미가 없다.
+    check('꺼져 있으면 손잡이가 왼쪽', U.knobAt('all'), '3px');
+
     U.clickToggle();
-    check('작동 중엔 카드 테두리가 호박색',
-          U.btn.style.boxShadow.includes('240, 160, 32'), true);
+    check('켜면 손잡이가 오른쪽으로 간다', U.knobAt('all'), '19px');
+    check('트랙도 호박색',
+          U.panel.style.background.includes('58, 47, 34'), true);
 
     section('T19: 기본값 — 전체 OFF, 개별 사용');
     const storeT = makeSharedStore();
@@ -702,21 +709,21 @@ function section(title) {
     const T1 = makeTab('T1', storeT, clockT);
     const T2 = makeTab('T2', storeT, clockT);
 
-    check('모든 탭 기본 OFF', T1.armedText(), '모든 탭 OFF');
-    check('이 탭 기본 ON', T1.tabText(), '이 탭 ON');
+    check('모든 탭 기본 OFF', T1.armedText(), 'OFF');
+    check('이 탭 기본 ON', T1.tabText(), 'ON');
 
     section('T20: 이 탭 OFF 는 이 탭만 멈추고 다른 탭은 계속 이동한다');
     // 여러 탭에 다른 검색을 띄워두고 그중 하나만 재우는 게 목적이다.
     // 이게 전체를 건드리면 나머지 탭까지 같이 죽는다.
     T1.clickToggle();                      // 전체 ON (양쪽 탭)
-    check('T2 도 ON (전파됨)', T2.armedText(), '모든 탭 ON');
+    check('T2 도 ON (전파됨)', T2.armedText(), 'ON');
 
     const writesBeforeMute = storeT.writeCount();
     T1.clickTabToggle();                   // T1 만 정지
 
-    check('T1 OFF 표시', T1.tabText(), '이 탭 OFF');
-    check('T1 의 전체 스위치는 그대로 ON', T1.armedText(), '모든 탭 ON');
-    check('T2 는 영향 없음', T2.tabText(), '이 탭 ON');
+    check('T1 OFF 표시', T1.tabText(), 'OFF');
+    check('T1 의 전체 스위치는 그대로 ON', T1.armedText(), 'ON');
+    check('T2 는 영향 없음', T2.tabText(), 'ON');
     check('저장소에 아무것도 쓰지 않는다',
           storeT.writeCount() - writesBeforeMute, 0);
 
@@ -759,8 +766,8 @@ function section(title) {
     section('T22: 다시 사용으로 돌리면 그대로 이동한다');
     // 정지가 탭을 영구히 망가뜨리면 안 된다.
     M.clickTabToggle();
-    check('사용 상태로 복귀', M.tabText(), '이 탭 ON');
-    check('전체는 계속 ON', M.armedText(), '모든 탭 ON');
+    check('사용 상태로 복귀', M.tabText(), 'ON');
+    check('전체는 계속 ON', M.armedText(), 'ON');
 
     const idResume = 'f2'.repeat(32);
     M.addRow(idResume);
@@ -782,8 +789,8 @@ function section(title) {
 
     V.clickTabToggle();
     check('이 탭을 끄면 광채가 꺼진다', V.cardGlowing(), false);
-    check('상위 버튼은 흐려지지 않는다', V.btn.style.opacity, '1');
-    check('모든 탭 상태 자체는 ON 유지', V.armedText(), '모든 탭 ON');
+    check('상위 스위치는 흐려지지 않는다', V.btn.style.opacity, '1');
+    check('모든 탭 상태 자체는 ON 유지', V.armedText(), 'ON');
 
     V.clickTabToggle();
     check('다시 켜면 광채가 돌아온다', V.cardGlowing(), true);
@@ -793,10 +800,10 @@ function section(title) {
     // 뒤집혀 보인다 — "모든 탭 OFF 인데 이 탭 ON 이니 여긴 움직이나?"
     V.clickToggle();                       // 모든 탭 OFF
 
-    check('모든 탭 OFF', V.armedText(), '모든 탭 OFF');
-    check('이 탭은 ON 인 채로 남는다', V.tabText(), '이 탭 ON');
-    check('하위 버튼이 흐려진다', V.tabBtn.style.opacity, '0.4');
-    check('상위 버튼은 선명하다', V.btn.style.opacity, '1');
+    check('OFF', V.armedText(), 'OFF');
+    check('이 탭은 ON 인 채로 남는다', V.tabText(), 'ON');
+    check('하위 스위치가 흐려진다', V.tabBtn.style.opacity, '0.4');
+    check('상위 스위치는 선명하다', V.btn.style.opacity, '1');
     check('광채 없음', V.cardGlowing(), false);
 
     // 그리고 실제로 움직이지 않아야 한다 — 상위 조건이 우선이다.
@@ -809,7 +816,7 @@ function section(title) {
     check('모든 탭 OFF 면 이 탭이 ON 이어도 이동하지 않는다', V.clicks, []);
 
     V.clickToggle();                       // 다시 모든 탭 ON
-    check('되켜면 하위 버튼도 선명해진다', V.tabBtn.style.opacity, '1');
+    check('되켜면 하위 스위치도 선명해진다', V.tabBtn.style.opacity, '1');
 
     section('T24: 키 이름이 new 가 아니어도 64자리 id 를 주워 이동한다');
     // 실제로 막힌 지점. {"new":[...]} 를 전제한 파서가 조용히 통과시켰다.
@@ -969,9 +976,9 @@ function section(title) {
 
     const O = makeTab('O', storeO, clockO);
 
-    check('세 버튼이 모두 있다',
+    check('스위치 2개 + 상세 버튼이 모두 있다',
           [!!O.btn, !!O.tabBtn, !!O.detailBtn], [true, true, true]);
-    check('버튼은 숨지 않는다',
+    check('셋 다 숨지 않는다',
           [O.btn.style.display, O.tabBtn.style.display, O.detailBtn.style.display]
               .every((d) => d !== 'none'), true);
     check('상세는 접힌 채로 시작', O.isCollapsed(), true);
@@ -1041,7 +1048,7 @@ function section(title) {
     check('이동 뒤 click 은 무시된다', Dg2.armedText(), armedBefore);
 
     Dg2.btn.onclick();                     // 다음 클릭은 정상 동작
-    check('그 다음 클릭은 먹힌다', Dg2.armedText(), '모든 탭 ON');
+    check('그 다음 클릭은 먹힌다', Dg2.armedText(), 'ON');
 
     check('4px 미만은 이동이 아니다', (() => {
         Dg2.dragBy(1, 1);

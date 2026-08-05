@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-001
+// @version      2026-08-05-002
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -32,9 +32,9 @@
 
     const usedItemIds = new Set();
 
-    // 검색(/api/trade*/search) 응답이 돌려준 매물 id.
+    // 검색(/api/trade*/search) 응답이 돌려준 매물 id → 기록 시각(ms).
     // 라이브 소켓이 밀어준 매물과 구분하는 유일한 근거다 — 아래 "매물 출처" 참고.
-    const searchOriginIds = new Set();
+    const searchOriginIds = new Map();
 
     let serverAlive = false;
 
@@ -45,9 +45,12 @@
     const MAX_USED_IDS = 1000;
 
     // searchOriginIds 도 같은 방식으로 제한한다. 검색 1회가 수십~수백 건을 돌려주므로
-    // 상한을 더 크게 잡는다. 넘쳐서 오래된 id 가 빠져도 그 매물들은 이미
-    // MAX_ITEM_AGE_MS 에 걸리므로 자동 이동으로 되살아나지 않는다.
+    // 상한을 더 크게 잡는다.
     const MAX_SEARCH_IDS = 5000;
+
+    // 검색 결과 중 끝내 fetch 되지 않은 id 를 이 시간이 지나면 잊는다.
+    // (fetch 된 id 는 그 즉시 지우므로 여기까지 오지 않는다.)
+    const SEARCH_ORIGIN_TTL_MS = 30 * 60_000;
 
     // hideout 버튼을 이 시간까지 못 찾으면 관찰을 포기한다.
     const HIDEOUT_WAIT_TIMEOUT_MS = 15_000;
@@ -446,18 +449,6 @@ Last Teleport: ${fmt(lastTeleport)}`;
     // 쿨다운: 마지막 실제 텔레포트로부터 COOLDOWN_MS 가 지나야 다시 발동한다.
     // 어느 탭에서 이동했는지는 상관없다.
     function canTriggerHideout(itemId) {
-
-        // 손으로 누른 검색(또는 페이지 최초 로드)의 결과다. 라이브 푸시가 아니므로
-        // 자동 이동시키지 않는다.
-        if (searchOriginIds.has(itemId)) {
-
-            log('HIDEOUT',
-                `skip: 검색 결과로 들어온 매물 (라이브 푸시 아님)`
-                + ` id=${shortId(itemId)}`);
-
-            return false;
-
-        }
 
         if (hideoutPending) {
 
@@ -926,16 +917,17 @@ Last Teleport: ${fmt(lastTeleport)}`;
 
     }
 
-    // Set 은 삽입 순서를 유지하므로, 상한을 넘으면 앞쪽(가장 오래된)부터 버린다.
-    function trimSet(set, max) {
+    // Set/Map 모두 삽입 순서를 유지하므로, 상한을 넘으면 앞쪽(가장 오래된)부터 버린다.
+    // 순회 중 현재 항목을 지우는 건 두 자료구조 모두 안전하다.
+    function trimOldest(coll, max) {
 
-        if (set.size <= max) return;
+        if (coll.size <= max) return;
 
-        const overflow = set.size - max;
+        const overflow = coll.size - max;
         let removed = 0;
 
-        for (const old of set) {
-            set.delete(old);
+        for (const old of coll.keys()) {
+            coll.delete(old);
             if (++removed >= overflow) break;
         }
 
@@ -944,7 +936,7 @@ Last Teleport: ${fmt(lastTeleport)}`;
     function rememberItemId(id) {
 
         usedItemIds.add(id);
-        trimSet(usedItemIds, MAX_USED_IDS);
+        trimOldest(usedItemIds, MAX_USED_IDS);
 
     }
 
@@ -963,6 +955,15 @@ Last Teleport: ${fmt(lastTeleport)}`;
      * 그래서 /search 가 돌려준 id 를 기억해 두고, 그 id 로 들어온 매물은
      * 자동 이동 대상에서 뺀다. /search 응답은 항상 /fetch 보다 먼저 도착한다
      * (fetch 가 그 id 목록을 써야 하므로 순서가 보장된다).
+     *
+     * 제외는 영구가 아니라 "그 검색에 딸린 fetch 1회" 로 한정한다.
+     * 매물을 fetch 로 실어 오는 순간 기록을 지운다. 같은 매물이 나중에 재등록돼
+     * 라이브로 다시 올라오면 그때는 정상적으로 이동해야 하기 때문이다.
+     * 영구 제외로 두면 한 번 검색에 걸린 매물은 두 번 다시 못 잡는다.
+     *
+     * 끝까지 스크롤하지 않아 fetch 되지 않은 id 는 소비될 일이 없으므로
+     * SEARCH_ORIGIN_TTL_MS 로 만료시킨다. 검색 결과를 한참 뒤에 스크롤하는 경우까지
+     * 덮으려고 넉넉하게 잡았다 — 놓친 이동보다 엉뚱한 이동이 훨씬 나쁘다.
      *
      * 알림은 막지 않는다. 손으로 검색해서 띄운 결과에 알림이 오는 건 시끄러울 뿐
      * 되돌릴 수 없는 동작이 아니다. 게임을 움직이는 쪽만 막는다.
@@ -983,20 +984,55 @@ Last Teleport: ${fmt(lastTeleport)}`;
 
         }
 
+        const now = Date.now();
+
+        // 소비되지 않고 남은 지난 검색의 찌꺼기를 먼저 걷어낸다.
+        for (const [id, at] of searchOriginIds) {
+
+            if (now - at > SEARCH_ORIGIN_TTL_MS) searchOriginIds.delete(id);
+
+        }
+
         let added = 0;
 
         for (const id of ids) {
 
             if (typeof id !== 'string' || !id) continue;
 
-            searchOriginIds.add(id);
+            searchOriginIds.set(id, now);
             added++;
 
         }
 
-        trimSet(searchOriginIds, MAX_SEARCH_IDS);
+        trimOldest(searchOriginIds, MAX_SEARCH_IDS);
 
-        log(source, `search 결과 ${added}건 기록 — 이 id 들은 자동 이동 대상에서 제외`);
+        log(source, `search 결과 ${added}건 기록`
+            + ' — 이 id 들은 뒤따르는 fetch 1회에 한해 자동 이동에서 제외');
+
+    }
+
+    // 이 fetch 응답 중 방금 그 검색이 실어 온 id 를 뽑고, 동시에 기록에서 지운다.
+    //
+    // 루프 안이 아니라 미리 한 번에 처리하는 이유:
+    // processTradeResults 는 나이/중복으로 continue 하거나 첫 발동에서 break 하므로,
+    // 루프에 맡기면 응답에 실려 온 id 중 일부만 소비된다. 소비되지 않은 id 는
+    // 만료 전까지 계속 제외돼, 나중에 라이브로 올라와도 이동하지 않는다.
+    function consumeSearchOrigin(results) {
+
+        const fromSearch = new Set();
+
+        for (const r of results) {
+
+            const id = r?.id;
+
+            if (!id || !searchOriginIds.has(id)) continue;
+
+            fromSearch.add(id);
+            searchOriginIds.delete(id);
+
+        }
+
+        return fromSearch;
 
     }
 
@@ -1015,6 +1051,10 @@ Last Teleport: ${fmt(lastTeleport)}`;
                 return;
 
             }
+
+            // 루프에 들어가기 전에 출처를 확정한다. 루프 안에서 하면 continue/break
+            // 때문에 일부 id 가 소비되지 않은 채 남는다 (consumeSearchOrigin 참고).
+            const fromSearch = consumeSearchOrigin(results);
 
             for (const r of results) {
 
@@ -1079,9 +1119,19 @@ Last Teleport: ${fmt(lastTeleport)}`;
                  **********************/
                 // 억제는 4단계다: 무장 여부 → 검색 출처 → hideoutPending → 쿨다운.
                 // 이동에 성공하면 simulateHumanClick 이 무장을 해제하므로 여기서 끊긴다.
-                if (autoHideoutArmed && canTriggerHideout(id)) {
+                if (autoHideoutArmed) {
 
-                    waitForHideoutButton(id);
+                    if (fromSearch.has(id)) {
+
+                        log('HIDEOUT',
+                            'skip: 검색 결과로 들어온 매물 (라이브 푸시 아님)'
+                            + ` id=${shortId(id)}`);
+
+                    } else if (canTriggerHideout(id)) {
+
+                        waitForHideoutButton(id);
+
+                    }
 
                 }
 

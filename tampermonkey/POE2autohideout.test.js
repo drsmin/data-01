@@ -468,6 +468,58 @@ function section(title) {
           S2.logs.some(([, m]) =>
               m.includes('[POE][POE2] search 결과')), true);
 
+    section('T14: 검색에 걸렸던 매물도 나중에 라이브로 오면 이동한다');
+    // 제외가 영구면 한 번 검색에 걸린 매물은 두 번 다시 못 잡는다.
+    // fetch 로 실어 오는 순간 기록이 지워져야 한다.
+    const storeR = makeSharedStore();
+    const clockR = makeClock();
+
+    const R = makeTab('R', storeR, clockR);
+    R.clickToggle();
+
+    const idRelist = '4'.repeat(64);
+    R.addRow(idRelist);
+
+    const oldIso = new Date(Date.now() - 300_000).toISOString();
+
+    await R.feedSearch([idRelist]);        // 수동 검색에 걸림
+    await R.feed(idRelist, oldIso);        // 그 본문 (5분 전 매물 — 나이로 skip)
+    clockR.flush();
+
+    check('검색 단계에서는 이동 없음', R.clicks, []);
+
+    // 같은 매물이 재등록돼 라이브로 올라온다.
+    await R.feed(idRelist, new Date().toISOString());
+    clockR.flush();
+
+    check('재등록 후 라이브 푸시는 이동한다', R.clicks, [idRelist]);
+
+    section('T15: 스크롤하지 않아 fetch 안 된 id 는 계속 제외된다');
+    // 검색 결과는 10건씩 나눠 fetch 된다. 아직 안 실려 온 id 까지 풀어주면
+    // 나중에 스크롤했을 때 그대로 이동해버린다.
+    const storeP = makeSharedStore();
+    const clockP = makeClock();
+
+    const P = makeTab('P', storeP, clockP);
+    P.clickToggle();
+
+    const idPage1 = '5'.repeat(64);
+    const idPage2 = '6'.repeat(64);
+    P.addRow(idPage1);
+    P.addRow(idPage2);
+
+    await P.feedSearch([idPage1, idPage2]);
+    await P.feed(idPage1, new Date().toISOString());   // 1페이지만 fetch
+    clockP.flush();
+
+    check('1페이지 이동 없음', P.clicks, []);
+
+    await P.feed(idPage2, new Date().toISOString());   // 스크롤 → 2페이지 fetch
+    clockP.flush();
+
+    check('나중에 스크롤해도 이동 없음', P.clicks, []);
+    check('P 무장 유지', P.armedText(), 'AUTO HO ON');
+
     section('A 탭 로그 전문 (형식 눈으로 확인용)');
     for (const [lvl, m] of A.logs) console.log(`  [${lvl}] ${m}`);
 

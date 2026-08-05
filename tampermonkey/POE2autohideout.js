@@ -1,10 +1,10 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-003
+// @version      2026-08-05-004
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
-// @run-at       document-idle
+// @run-at       document-start
 // @grant        GM_xmlhttpRequest
 // @connect      127.0.0.1
 // @updateURL    https://raw.githubusercontent.com/drsmin/data-01/refs/heads/master/tampermonkey/POE2autohideout.js
@@ -37,6 +37,11 @@
     const searchOriginIds = new Map();
 
     let serverAlive = false;
+
+    // 라이브 소켓 관찰 지표. updateStatus 가 초기화 중에 바로 읽으므로
+    // (오버레이의 Live 줄) 여기서 선언해야 한다 — 아래에 두면 TDZ 로 터진다.
+    let liveSocketCount = 0;   // 관찰한 소켓 수
+    let livePushCount = 0;     // 소켓이 알려준 매물 수
 
     const COOLDOWN_MS = 30_000;
     const MAX_ITEM_AGE_MS = 60_000;
@@ -90,6 +95,7 @@
      *   INIT     스크립트 시작 / 후킹 설치
      *   UI       오버레이, 토글 버튼
      *   HOOK     fetch / search 응답 가로채기
+     *   LIVE     라이브 소켓 관찰 / 푸시 수신
      *   POE1     POE1 매물 처리
      *   POE2     POE2 매물 처리
      *   HIDEOUT  은신처 버튼 대기 / 클릭
@@ -248,13 +254,32 @@ border-radius:4px;
 
     // 오버레이가 못 붙어도 알림/텔레포트는 계속 동작해야 한다.
     // (status 는 분리된 노드로 남아 updateStatus 가 그대로 쓴다.)
-    try {
+    //
+    // @run-at 이 document-start 라 이 시점에는 body 가 아직 없다.
+    // 후킹을 사이트보다 먼저 걸려면 그 편이 맞고 — 특히 라이브 소켓은 우리보다
+    // 먼저 열리면 영영 못 본다 — 오버레이만 body 가 생길 때까지 미룬다.
+    function attachOverlay() {
 
-        document.body.appendChild(overlay);
+        try {
 
-    } catch (e) {
+            document.body.appendChild(overlay);
 
-        fail('UI', '오버레이를 body 에 붙이지 못했다 — 상태 표시 없이 계속 진행한다', e);
+        } catch (e) {
+
+            fail('UI', '오버레이를 body 에 붙이지 못했다'
+                 + ' — 상태 표시 없이 계속 진행한다', e);
+
+        }
+
+    }
+
+    if (document.body) {
+
+        attachOverlay();
+
+    } else {
+
+        document.addEventListener('DOMContentLoaded', attachOverlay, { once: true });
 
     }
 
@@ -313,10 +338,13 @@ border-radius:4px;
 
         const fmt = (d) => d ? d.toLocaleTimeString() : 'None';
 
+        // Live 는 라이브 소켓이 실제로 관찰되고 있는지 눈으로 확인하는 줄이다.
+        // 소켓 0개면 자동 이동은 절대 발동하지 않는다 (REQUIRE_LIVE_PUSH).
         status.textContent =
             `Version: ${version}
 Status: ${statusText}
 Server: ${serverAlive ? 'ON':'OFF'}
+Live: ${liveSocketCount ? `소켓 ${liveSocketCount} / 푸시 ${livePushCount}` : '소켓 없음'}
 Last Alert: ${fmt(lastAlert)}
 Last Teleport: ${fmt(lastTeleport)}`;
 
@@ -539,7 +567,9 @@ Last Teleport: ${fmt(lastTeleport)}`;
 
         });
 
-        hideoutObserver.observe(document.body, {
+        // document-start 로 앞당겼으므로 body 가 없을 수도 있다 (실제로는 결과 행이
+        // 렌더링된 뒤에나 여기 오지만, null 을 넘기면 관찰 자체가 터진다).
+        hideoutObserver.observe(document.body || document.documentElement, {
             childList: true,
             subtree: true
         });
@@ -1036,6 +1066,244 @@ Last Teleport: ${fmt(lastTeleport)}`;
 
     }
 
+
+    /*********************************************************
+     * 라이브 소켓 (자동 이동 허용 목록)
+     *
+     * /search 를 가로채 검색 결과를 빼는 방식은 실패했다. 거래소가 검색 응답을
+     * Response.prototype.json 으로 읽지 않아 후킹에 아예 걸리지 않는다
+     * (fetch 응답만 잡히고 진단 로그에도 다른 /api 응답이 안 남았다).
+     *
+     * 그래서 반대 방향으로 간다. "검색 결과를 뺀다" 가 아니라
+     * "라이브 소켓이 밀어준 매물만 허용한다".
+     *
+     * 이쪽이 신호로서 더 정확하다. 사용자가 원하는 건 정확히 "라이브 검색에
+     * 걸린 매물로만 이동" 이고, 그걸 아는 유일한 출처가 소켓이다.
+     * 실패 방향도 낫다 — 신호를 놓치면 이동을 안 할 뿐, 엉뚱한 이동은 없다.
+     *
+     * 대신 신호를 놓치면 기능이 통째로 죽으므로 조용히 죽으면 안 된다.
+     *   - 관찰한 소켓 URL 을 소켓당 한 번 남긴다
+     *   - 형식을 못 알아본 메시지 원문을 한 번 남긴다
+     *   - 오버레이에 Live 카운터를 띄운다 (소켓이 살아 있는지 눈으로 확인)
+     *   - 막을 때마다 왜 막았는지 남긴다
+     * 그래도 안 되면 REQUIRE_LIVE_PUSH 를 false 로 내려 예전 동작으로 되돌린다.
+     *********************************************************/
+    // false 로 두면 라이브 확인 없이 이동한다 (수동 검색에도 이동하던 예전 동작).
+    const REQUIRE_LIVE_PUSH = true;
+
+    const MAX_LIVE_IDS = 500;
+
+    // 소켓이 알려준 뒤 이 시간 안에 fetch 되지 않으면 잊는다.
+    // 정상이면 수백 ms 안에 fetch 되므로 넉넉한 값이다.
+    const LIVE_PUSH_TTL_MS = 5 * 60_000;
+
+    // 소켓이 밀어준 매물 id → 수신 시각(ms).
+    const livePushIds = new Map();
+
+    const hookedSockets = new WeakSet();
+
+    let unknownLiveMsgReported = false;
+
+    function handleLiveMessage(ev) {
+
+        try {
+
+            const data = ev?.data;
+
+            if (typeof data !== 'string') return;
+
+            let msg;
+
+            try {
+
+                msg = JSON.parse(data);
+
+            } catch (e) {
+
+                // 하트비트 등 JSON 이 아닌 메시지는 정상이다. 조용히 넘긴다.
+                return;
+
+            }
+
+            // POE 라이브 검색은 {"new":["<id>", ...]} 를 보낸다.
+            const ids = msg?.new;
+
+            if (!Array.isArray(ids)) {
+
+                // auth 응답 등은 정상이므로 무시하되, 형식이 통째로 다른 경우를
+                // 알아챌 수 있게 원문을 딱 한 번 남긴다.
+                if (!unknownLiveMsgReported && msg && !('auth' in msg)) {
+
+                    unknownLiveMsgReported = true;
+
+                    log('LIVE', 'new 배열이 없는 메시지 (형식 확인용, 최초 1회만)',
+                        data.slice(0, 300));
+
+                }
+
+                return;
+
+            }
+
+            const now = Date.now();
+
+            for (const [id, at] of livePushIds) {
+
+                if (now - at > LIVE_PUSH_TTL_MS) livePushIds.delete(id);
+
+            }
+
+            let added = 0;
+
+            for (const id of ids) {
+
+                if (typeof id !== 'string' || !id) continue;
+
+                livePushIds.set(id, now);
+                added++;
+
+            }
+
+            trimOldest(livePushIds, MAX_LIVE_IDS);
+
+            livePushCount += added;
+            updateStatus();
+
+            log('LIVE', `푸시 ${added}건 — 자동 이동 허용`
+                + ` (${ids.map(shortId).join(',')})`);
+
+        } catch (e) {
+
+            fail('LIVE', '소켓 메시지 처리 중 예외', e);
+
+        }
+
+    }
+
+    // 사이트의 리스너는 건드리지 않는다. 우리 리스너를 따로 붙일 뿐이라
+    // 사이트가 removeEventListener 로 자기 리스너를 떼는 데 지장이 없다.
+    function attachLiveListener(sock) {
+
+        try {
+
+            if (!sock || hookedSockets.has(sock)) return;
+
+            hookedSockets.add(sock);
+
+            EventTarget.prototype.addEventListener.call(
+                sock, 'message', handleLiveMessage);
+
+            liveSocketCount++;
+            updateStatus();
+
+            log('LIVE', `소켓 관찰 시작: ${sock.url || '(url 없음)'}`);
+
+        } catch (e) {
+
+            fail('LIVE', '소켓에 리스너를 붙이지 못했다', e);
+
+        }
+
+    }
+
+    // 소켓 인스턴스를 붙잡는 방법.
+    //
+    // 생성자(window.WebSocket) 교체는 Tampermonkey 샌드박스에서 페이지 쪽에
+    // 반영되지 않을 수 있다(unsafeWindow 가 필요하다). 반면 프로토타입 변경은
+    // 이 스크립트의 Response.prototype.json 후킹처럼 확실히 먹는다.
+    //
+    // 그래서 "사이트가 메시지를 받으려면 반드시 거쳐야 하는 지점" 두 곳을 잡는다.
+    // 둘 중 어느 쪽을 쓰든 그 순간 소켓 인스턴스(this)를 얻는다.
+    function installWebSocketHook() {
+
+        if (typeof WebSocket !== 'function'
+            || typeof EventTarget !== 'function') {
+
+            fail('INIT', 'WebSocket / EventTarget 을 쓸 수 없어 라이브 소켓을'
+                 + ' 관찰할 수 없다 — 자동 이동이 전부 막힌다.'
+                 + ' REQUIRE_LIVE_PUSH 를 false 로 내리면 예전 동작으로 돌아간다.');
+
+            return;
+
+        }
+
+        const proto = WebSocket.prototype;
+
+        // (1) addEventListener('message', ...) 경로
+        const originalAdd = proto.addEventListener
+            || EventTarget.prototype.addEventListener;
+
+        Object.defineProperty(proto, 'addEventListener', {
+            configurable: true,
+            writable: true,
+            value: function (...args) {
+                if (args[0] === 'message') attachLiveListener(this);
+                return originalAdd.apply(this, args);
+            }
+        });
+
+        // (2) sock.onmessage = ... 경로
+        const desc = Object.getOwnPropertyDescriptor(proto, 'onmessage');
+
+        if (desc && typeof desc.set === 'function') {
+
+            Object.defineProperty(proto, 'onmessage', {
+                configurable: true,
+                enumerable: desc.enumerable,
+                get: desc.get,
+                set: function (fn) {
+                    attachLiveListener(this);
+                    return desc.set.call(this, fn);
+                }
+            });
+
+        } else {
+
+            warn('INIT', 'WebSocket.prototype.onmessage 접근자를 못 찾았다'
+                 + ' — addEventListener 경로만 관찰한다');
+
+        }
+
+        log('INIT', 'WebSocket 후킹 설치 완료');
+
+    }
+
+    // consumeSearchOrigin 과 같은 이유로 루프 밖에서 한 번에 소비한다.
+    function consumeLivePush(results) {
+
+        const fromLive = new Set();
+
+        for (const r of results) {
+
+            const id = r?.id;
+
+            if (!id || !livePushIds.has(id)) continue;
+
+            fromLive.add(id);
+            livePushIds.delete(id);
+
+        }
+
+        return fromLive;
+
+    }
+
+    // 막았을 때 왜 막았는지. 원인마다 대처가 다르므로 뭉뚱그리지 않는다.
+    function liveBlockReason(id, fromSearch) {
+
+        if (fromSearch.has(id)) return '검색 결과로 들어온 매물';
+
+        if (liveSocketCount === 0) {
+
+            return '라이브 소켓을 하나도 못 봤다'
+                + ' (이 탭은 라이브 검색이 아니거나 후킹이 늦었다)';
+
+        }
+
+        return `라이브 푸시 목록에 없다 (소켓 ${liveSocketCount}개 관찰 중)`;
+
+    }
+
     function processTradeResults(json, source = 'UNKNOWN') {
 
         // 예외가 터졌을 때 어느 매물에서였는지 알 수 있어야 한다.
@@ -1055,6 +1323,7 @@ Last Teleport: ${fmt(lastTeleport)}`;
             // 루프에 들어가기 전에 출처를 확정한다. 루프 안에서 하면 continue/break
             // 때문에 일부 id 가 소비되지 않은 채 남는다 (consumeSearchOrigin 참고).
             const fromSearch = consumeSearchOrigin(results);
+            const fromLive = consumeLivePush(results);
 
             for (const r of results) {
 
@@ -1117,14 +1386,13 @@ Last Teleport: ${fmt(lastTeleport)}`;
                 /**********************
                  * AUTO HIDEOUT
                  **********************/
-                // 억제는 4단계다: 무장 여부 → 검색 출처 → hideoutPending → 쿨다운.
+                // 억제는 4단계다: 무장 여부 → 라이브 푸시 확인 → hideoutPending → 쿨다운.
                 // 이동에 성공하면 simulateHumanClick 이 무장을 해제하므로 여기서 끊긴다.
                 if (autoHideoutArmed) {
 
-                    if (fromSearch.has(id)) {
+                    if (REQUIRE_LIVE_PUSH && !fromLive.has(id)) {
 
-                        log('HIDEOUT',
-                            'skip: 검색 결과로 들어온 매물 (라이브 푸시 아님)'
+                        log('HIDEOUT', `skip: ${liveBlockReason(id, fromSearch)}`
                             + ` id=${shortId(id)}`);
 
                     } else if (canTriggerHideout(id)) {
@@ -1325,6 +1593,10 @@ Last Teleport: ${fmt(lastTeleport)}`;
     try {
 
         installResponseHook();
+
+        // 응답 후킹보다 먼저 걸어도 되지만, 순서를 이 쪽으로 둔 이유는 없다.
+        // 둘 다 사이트가 첫 요청을 보내기 전에 설치되면 된다.
+        installWebSocketHook();
 
         checkServerAliveOnce();
 

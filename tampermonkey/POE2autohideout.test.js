@@ -91,12 +91,16 @@ function makeClock() {
 
 
 // ==================== 가짜 탭 ====================
-function makeTab(name, store, clock, src = SRC) {
+function makeTab(name, store, clock, src = SRC, opts = {}) {
 
     const logs = [];
     const clicks = [];
     const rows = new Map();
     const created = [];
+
+    // @run-at document-start 재현: 스크립트가 돌 때 body 가 아직 없는 상태.
+    const docListeners = [];
+    const bodyNode = { appendChild() { bodyNode.attached = true; } };
 
     const el = () => ({
         style: { cssText: '' },
@@ -107,7 +111,9 @@ function makeTab(name, store, clock, src = SRC) {
 
     const document = {
         title: '',
-        body: { appendChild() {} },
+        body: opts.noBody ? null : bodyNode,
+        documentElement: { tag: 'html' },
+        addEventListener: (type, fn) => docListeners.push({ type, fn }),
         createElement() { const e = el(); created.push(e); return e; },
         querySelector(sel) {
             const m = /data-id="([^"]+)"/.exec(sel);
@@ -148,6 +154,57 @@ function makeTab(name, store, clock, src = SRC) {
 
     const MouseEvent = class { constructor(type) { this.type = type; } };
 
+    // 라이브 소켓 후킹은 프로토타입을 갈아끼운다. 실제 브라우저와 같은 모양을
+    // 줘야 (EventTarget 상속 + onmessage 접근자) 후킹 경로가 그대로 검증된다.
+    const EventTarget_ = class {
+        constructor() { this._listeners = {}; }
+        addEventListener(type, fn) {
+            (this._listeners[type] = this._listeners[type] || []).push(fn);
+        }
+        removeEventListener(type, fn) {
+            const l = this._listeners[type];
+            if (l) this._listeners[type] = l.filter((f) => f !== fn);
+        }
+    };
+
+    const WebSocket_ = class extends EventTarget_ {
+        constructor(url) { super(); this.url = url; }
+        // 서버에서 메시지가 온 것처럼 흘려보낸다.
+        deliver(data) {
+            const ev = { data };
+            for (const fn of this._listeners.message || []) fn(ev);
+            if (this.onmessage) this.onmessage(ev);
+        }
+    };
+
+    Object.defineProperty(WebSocket_.prototype, 'onmessage', {
+        configurable: true,
+        get() { return this._onmessage || null; },
+        set(fn) { this._onmessage = fn; },
+    });
+
+    tab.WebSocket = WebSocket_;
+
+    // 사이트가 소켓을 열고 핸들러를 다는 흉내.
+    // way: 사이트가 쓰는 두 경로 중 어느 쪽인지 ('addEventListener' | 'onmessage')
+    tab.openSocket = (url, way = 'addEventListener') => {
+        const sock = new WebSocket_(url);
+        const siteHandler = (ev) => { (tab.siteMessages = tab.siteMessages || []).push(ev.data); };
+        if (way === 'onmessage') sock.onmessage = siteHandler;
+        else sock.addEventListener('message', siteHandler);
+        sock.siteHandler = siteHandler;
+        return sock;
+    };
+
+    // 라이브 소켓이 신규 매물을 밀어준 것처럼. 소켓은 탭당 한 번만 연다.
+    tab.livePush = (...ids) => {
+        if (!tab.sock) {
+            tab.sock = tab.openSocket(
+                'wss://poe.kakaogames.com/api/trade/live/Standard/9zRwreG8CK');
+        }
+        tab.sock.deliver(JSON.stringify({ new: ids }));
+    };
+
     const MutationObserver = class {
         constructor(cb) { this.cb = cb; tab.observer = this; }
         observe() {}
@@ -159,16 +216,28 @@ function makeTab(name, store, clock, src = SRC) {
         'window', 'document', 'localStorage', 'console',
         'Response', 'MouseEvent', 'MutationObserver', 'CSS',
         'setTimeout', 'clearTimeout', 'GM_xmlhttpRequest', 'GM_info',
+        'WebSocket', 'EventTarget',
         src);
 
     fn(window, document, tab.localStorage, console_,
        Response, MouseEvent, MutationObserver, { escape: (s) => s },
        clock.setTimeout, clock.clearTimeout,
-       () => {}, { script: { version: 'test' } });
+       () => {}, { script: { version: 'test' } },
+       WebSocket_, EventTarget_);
 
     // createElement 호출 순서: overlay, hideoutBtn, status
     tab.btn = created[1];
     tab.status = created[2];
+
+    // body 가 생기고 DOMContentLoaded 가 발화한 시점.
+    tab.domReady = () => {
+        document.body = bodyNode;
+        for (const l of docListeners) {
+            if (l.type === 'DOMContentLoaded') l.fn();
+        }
+    };
+
+    tab.overlayAttached = () => bodyNode.attached === true;
 
     tab.armedText = () => tab.btn.textContent;
     tab.clickToggle = () => tab.btn.onclick();
@@ -269,6 +338,7 @@ function section(title) {
     section('T4: A 가 이동하면 전체가 해제되고 쿨다운이 공유된다');
     const id1 = 'a'.repeat(64);
     A.addRow(id1);
+    A.livePush(id1);
     await A.feed(id1, new Date().toISOString());
     clock.flush();                         // 예약된 클릭 실행
     check('A 가 클릭 1회', A.clicks, [id1]);
@@ -283,6 +353,7 @@ function section(title) {
     check('B ON', B.armedText(), 'AUTO HO ON');
     const id2 = 'b'.repeat(64);
     B.addRow(id2);
+    B.livePush(id2);                       // 라이브 확인은 통과시키고 쿨다운만 남긴다
     await B.feed(id2, new Date().toISOString());
     clock.flush();
     check('B 는 클릭하지 않음 (쿨다운 공유)', B.clicks, []);
@@ -318,6 +389,9 @@ function section(title) {
     const id3 = 'c'.repeat(64);
     D.addRow(id3);
     E.addRow(id3);
+
+    D.livePush(id3);
+    E.livePush(id3);
 
     const iso3 = new Date().toISOString();
     await D.feed(id3, iso3);
@@ -360,6 +434,9 @@ function section(title) {
     const id4 = 'd'.repeat(64);
     G.addRow(id4);
     H.addRow(id4);
+
+    G.livePush(id4);
+    H.livePush(id4);
 
     const iso4 = new Date().toISOString();
     await G.feed(id4, iso4);
@@ -418,9 +495,9 @@ function section(title) {
     check('POE2 로그에 POE1 스코프 없음',
           P2.logs.some(([, m]) => m.includes('[POE][POE1]')), false);
 
-    section('T11: 수동 검색 결과로는 이동하지 않는다 (라이브 푸시만 이동)');
-    // 라이브가 꺼진 탭에서 손으로 검색해도, 무장 상태는 탭 간 공유라 그대로
-    // 발동해버렸다. /search 가 돌려준 id 는 자동 이동 대상에서 빠져야 한다.
+    section('T11: 라이브 푸시가 없으면 이동하지 않는다 (수동 검색 시나리오)');
+    // 원래 버그. 라이브가 꺼진 탭에서 손으로 검색해도 무장 상태는 탭 간 공유라
+    // 그대로 발동했다. 이제는 소켓이 알려준 id 가 아니면 이동하지 않는다.
     const storeS = makeSharedStore();
     const clockS = makeClock();
 
@@ -432,98 +509,95 @@ function section(title) {
     const idSearch = '1'.repeat(64);
     S.addRow(idSearch);
 
-    await S.feedSearch([idSearch]);                        // 수동 검색
-    await S.feed(idSearch, new Date().toISOString());      // 그 결과의 본문 fetch
+    await S.feed(idSearch, new Date().toISOString());      // 검색 결과 본문 fetch
     clockS.flush();
 
-    check('검색 결과로는 클릭하지 않음', S.clicks, []);
+    check('라이브 확인 없으면 클릭하지 않음', S.clicks, []);
     check('무장 상태 유지 (해제되지 않음)', S.armedText(), 'AUTO HO ON');
-    check('검색 출처 skip 로그 있음',
+    check('소켓을 못 봤다는 이유가 남는다',
           S.logs.some(([, m]) =>
-              m.includes('skip: 검색 결과로 들어온 매물')), true);
-    check('알림은 그대로 나감 (검색이 막는 건 이동뿐)',
+              m.includes('skip: 라이브 소켓을 하나도 못 봤다')), true);
+    check('알림은 그대로 나감 (막는 건 이동뿐)',
           S.logs.some(([, m]) => m.includes('trigger')), true);
 
-    section('T12: 같은 탭에서 라이브 푸시가 오면 정상 이동한다');
-    // T11 의 억제가 탭 전체를 죽이면 안 된다. /search 를 거치지 않은 id 는 그대로 발동.
+    section('T12: 소켓이 밀어준 매물은 이동한다');
+    // T11 의 억제가 기능을 통째로 죽이면 안 된다.
     const idLive = '2'.repeat(64);
     S.addRow(idLive);
-    await S.feed(idLive, new Date().toISOString());        // 웹소켓 푸시 → fetch
+    S.livePush(idLive);
+    await S.feed(idLive, new Date().toISOString());
     clockS.flush();
 
     check('라이브 푸시는 클릭됨', S.clicks, [idLive]);
     check('이동 후 자동 해제', S.armedText(), 'AUTO HO OFF');
+    check('푸시 수신 로그 있음',
+          S.logs.some(([, m]) => m.includes('[POE][LIVE] 푸시 1건')), true);
 
-    section('T13: 검색 출처 판별이 POE2 경로에서도 동작한다');
-    const storeS2 = makeSharedStore();
-    const clockS2 = makeClock();
+    section('T13: 소켓을 본 뒤에도 목록에 없는 매물은 막고, 이유를 구분한다');
+    // 소켓이 살아 있는 탭에서 손으로 검색한 경우. "소켓을 못 봤다" 와는
+    // 대처가 다르므로 로그가 달라야 한다.
+    const idOther = '7'.repeat(64);
+    S.clickToggle();                       // 재무장
+    S.addRow(idOther);
+    await S.feed(idOther, new Date().toISOString());
+    clockS.flush();
 
-    const S2 = makeTab('S2', storeS2, clockS2);
-    S2.clickToggle();
+    check('목록에 없으면 클릭하지 않음', S.clicks, [idLive]);
+    check('소켓은 봤지만 목록에 없다는 이유가 남는다',
+          S.logs.some(([, m]) =>
+              m.includes('skip: 라이브 푸시 목록에 없다')), true);
 
-    const id2Search = '3'.repeat(64);
-    S2.addRow(id2Search);
+    section('T14: 라이브 푸시는 1회만 유효하다 (소비)');
+    // 목록에 남겨두면 같은 id 의 오래된 fetch 가 나중에 이동을 일으킬 수 있다.
+    const storeC = makeSharedStore();
+    const clockC = makeClock();
 
-    await S2.feedSearch([id2Search], 'trade2');
-    await S2.feed(id2Search, new Date().toISOString(), 'trade2');
-    clockS2.flush();
+    const Cs = makeTab('Cs', storeC, clockC);
+    Cs.clickToggle();
 
-    check('POE2 검색 결과로도 클릭하지 않음', S2.clicks, []);
-    check('POE2 search 응답이 [POE][POE2] 스코프로 기록됨',
-          S2.logs.some(([, m]) =>
-              m.includes('[POE][POE2] search 결과')), true);
-
-    section('T14: 검색에 걸렸던 매물도 나중에 라이브로 오면 이동한다');
-    // 제외가 영구면 한 번 검색에 걸린 매물은 두 번 다시 못 잡는다.
-    // fetch 로 실어 오는 순간 기록이 지워져야 한다.
-    const storeR = makeSharedStore();
-    const clockR = makeClock();
-
-    const R = makeTab('R', storeR, clockR);
-    R.clickToggle();
-
-    const idRelist = '4'.repeat(64);
-    R.addRow(idRelist);
+    const idOnce = '8'.repeat(64);
+    Cs.addRow(idOnce);
+    Cs.livePush(idOnce);
 
     const oldIso = new Date(Date.now() - 300_000).toISOString();
+    await Cs.feed(idOnce, oldIso);         // 첫 fetch — 나이로 skip, 허가는 소비됨
+    clockC.flush();
 
-    await R.feedSearch([idRelist]);        // 수동 검색에 걸림
-    await R.feed(idRelist, oldIso);        // 그 본문 (5분 전 매물 — 나이로 skip)
-    clockR.flush();
+    check('오래된 매물이라 이동 없음', Cs.clicks, []);
 
-    check('검색 단계에서는 이동 없음', R.clicks, []);
+    await Cs.feed(idOnce, new Date().toISOString());   // 같은 id 재등장
+    clockC.flush();
 
-    // 같은 매물이 재등록돼 라이브로 올라온다.
-    await R.feed(idRelist, new Date().toISOString());
-    clockR.flush();
+    check('소비된 허가로는 다시 이동하지 않음', Cs.clicks, []);
+    check('두 번째는 목록에 없다는 이유',
+          Cs.logs.filter(([, m]) =>
+              m.includes('라이브 푸시 목록에 없다')).length, 1);
 
-    check('재등록 후 라이브 푸시는 이동한다', R.clicks, [idRelist]);
+    section('T15: 사이트가 onmessage 로 핸들러를 달아도 소켓을 관찰한다');
+    // 사이트가 addEventListener 를 쓸지 onmessage 를 쓸지 모른다. 둘 다 잡아야 한다.
+    // 그리고 후킹이 사이트의 원래 핸들러를 깨면 라이브 검색 자체가 죽는다.
+    const storeW = makeSharedStore();
+    const clockW = makeClock();
 
-    section('T15: 스크롤하지 않아 fetch 안 된 id 는 계속 제외된다');
-    // 검색 결과는 10건씩 나눠 fetch 된다. 아직 안 실려 온 id 까지 풀어주면
-    // 나중에 스크롤했을 때 그대로 이동해버린다.
-    const storeP = makeSharedStore();
-    const clockP = makeClock();
+    const W = makeTab('W', storeW, clockW);
+    W.clickToggle();
 
-    const P = makeTab('P', storeP, clockP);
-    P.clickToggle();
+    const sock = W.openSocket(
+        'wss://poe.kakaogames.com/api/trade/live/Standard/abc', 'onmessage');
 
-    const idPage1 = '5'.repeat(64);
-    const idPage2 = '6'.repeat(64);
-    P.addRow(idPage1);
-    P.addRow(idPage2);
+    const idOn = '9'.repeat(64);
+    W.addRow(idOn);
+    sock.deliver(JSON.stringify({ new: [idOn] }));
 
-    await P.feedSearch([idPage1, idPage2]);
-    await P.feed(idPage1, new Date().toISOString());   // 1페이지만 fetch
-    clockP.flush();
+    await W.feed(idOn, new Date().toISOString());
+    clockW.flush();
 
-    check('1페이지 이동 없음', P.clicks, []);
-
-    await P.feed(idPage2, new Date().toISOString());   // 스크롤 → 2페이지 fetch
-    clockP.flush();
-
-    check('나중에 스크롤해도 이동 없음', P.clicks, []);
-    check('P 무장 유지', P.armedText(), 'AUTO HO ON');
+    check('onmessage 경로로도 이동한다', W.clicks, [idOn]);
+    check('사이트의 원래 핸들러도 그대로 호출된다',
+          W.siteMessages.length, 1);
+    check('소켓 URL 을 남긴다',
+          W.logs.some(([, m]) =>
+              m.includes('소켓 관찰 시작') && m.includes('/api/trade/live/')), true);
 
     section('T16: 처리 대상 아닌 거래소 API 는 경로별 1회만 진단 로그를 남긴다');
     // "search 로그가 없다" 의 원인이 (경로명이 다름) 인지 (fetch 를 안 씀) 인지
@@ -545,6 +619,32 @@ function section(title) {
           diag.some(([, m]) => m.includes('/api/trade/query')), true);
     check('/api 가 아닌 요청은 남기지 않는다',
           diag.some(([, m]) => m.includes('static')), false);
+
+    section('T17: body 가 없는 시점(document-start)에 시작해도 살아남는다');
+    // 후킹을 사이트보다 먼저 걸려면 document-start 여야 하는데, 그 시점엔 body 가
+    // 없다. 오버레이를 못 붙였다고 후킹까지 죽으면 본전도 못 찾는다.
+    const storeE = makeSharedStore();
+    const clockE = makeClock();
+
+    const Es = makeTab('Es', storeE, clockE, SRC, { noBody: true });
+
+    check('body 없이도 초기화됨', Es.armedText(), 'AUTO HO OFF');
+    check('아직 오버레이는 안 붙었다', Es.overlayAttached(), false);
+    check('오버레이 실패 오류를 남기지 않는다',
+          Es.logs.some(([lvl]) => lvl === 'error'), false);
+
+    Es.domReady();
+    check('DOMContentLoaded 에서 오버레이가 붙는다', Es.overlayAttached(), true);
+
+    // body 가 없던 동안에도 후킹은 살아 있어야 한다.
+    Es.clickToggle();
+    const idLate = 'ab'.repeat(32);
+    Es.addRow(idLate);
+    Es.livePush(idLate);
+    await Es.feed(idLate, new Date().toISOString());
+    clockE.flush();
+
+    check('후킹은 그대로 동작한다', Es.clicks, [idLate]);
 
     section('A 탭 로그 전문 (형식 눈으로 확인용)');
     for (const [lvl, m] of A.logs) console.log(`  [${lvl}] ${m}`);

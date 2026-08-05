@@ -332,20 +332,6 @@ function makeTab(name, store, clock, src = SRC, opts = {}) {
         await res.json();
     };
 
-    // 임의의 URL/본문을 그대로 후킹에 흘려보낸다 (진단 로그 검증용).
-    tab.feedRaw = async (url, data) => {
-        await new Response(url, data).json();
-    };
-
-    // 수동 검색(또는 페이지 최초 로드)이 먼저 받는 /search 응답.
-    // 본문은 매물 id 문자열 배열이다 (fetch 응답의 객체 배열과 다르다).
-    tab.feedSearch = async (ids, api = 'trade') => {
-        const res = new Response(
-            `https://poe.kakaogames.com/api/${api}/search/poe2/Standard`,
-            { id: 'searchid', complexity: 1, total: ids.length, result: ids });
-        await res.json();
-    };
-
     return tab;
 }
 
@@ -655,27 +641,6 @@ function section(title) {
     check('소켓 URL 을 남긴다',
           W.logs.some(([, m]) =>
               m.includes('소켓 관찰 시작') && m.includes('/api/trade/live/')), true);
-
-    section('T16: 처리 대상 아닌 거래소 API 는 경로별 1회만 진단 로그를 남긴다');
-    // "search 로그가 없다" 의 원인이 (경로명이 다름) 인지 (fetch 를 안 씀) 인지
-    // 구분하는 유일한 단서다. 시끄러우면 사람이 꺼버리므로 중복은 남기지 않는다.
-    const storeD = makeSharedStore();
-    const clockD = makeClock();
-
-    const Dg = makeTab('Dg', storeD, clockD);
-
-    await Dg.feedRaw('https://poe.kakaogames.com/api/trade/query/Standard?x=1', {});
-    await Dg.feedRaw('https://poe.kakaogames.com/api/trade/query/Hardcore?x=2', {});
-    await Dg.feedRaw('https://poe.kakaogames.com/api/trade/data/stats', {});
-    await Dg.feedRaw('https://poe.kakaogames.com/static/thing.json', {});
-
-    const diag = Dg.logs.filter(([, m]) => m.includes('처리 대상 아닌 거래소 API'));
-
-    check('경로 2종만 남는다 (같은 경로 중복 제거)', diag.length, 2);
-    check('쿼리스트링/리그를 떼고 경로만 남긴다',
-          diag.some(([, m]) => m.includes('/api/trade/query')), true);
-    check('/api 가 아닌 요청은 남기지 않는다',
-          diag.some(([, m]) => m.includes('static')), false);
 
     section('T17: body 가 없는 시점(document-start)에 시작해도 살아남는다');
     // 후킹을 사이트보다 먼저 걸려면 document-start 여야 하는데, 그 시점엔 body 가

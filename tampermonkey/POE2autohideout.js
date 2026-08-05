@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-015
+// @version      2026-08-05-016
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -57,10 +57,6 @@
 
     const usedItemIds = new Set();
 
-    // 검색(/api/trade*/search) 응답이 돌려준 매물 id → 기록 시각(ms).
-    // 라이브 소켓이 밀어준 매물과 구분하는 유일한 근거다 — 아래 "매물 출처" 참고.
-    const searchOriginIds = new Map();
-
     let serverAlive = false;
 
     // 라이브 소켓 관찰 지표. updateStatus 가 초기화 중에 바로 읽으므로
@@ -73,14 +69,6 @@
 
     // usedItemIds 무한 증가 방지: 상한 초과 시 가장 오래된 항목부터 버린다.
     const MAX_USED_IDS = 1000;
-
-    // searchOriginIds 도 같은 방식으로 제한한다. 검색 1회가 수십~수백 건을 돌려주므로
-    // 상한을 더 크게 잡는다.
-    const MAX_SEARCH_IDS = 5000;
-
-    // 검색 결과 중 끝내 fetch 되지 않은 id 를 이 시간이 지나면 잊는다.
-    // (fetch 된 id 는 그 즉시 지우므로 여기까지 오지 않는다.)
-    const SEARCH_ORIGIN_TTL_MS = 30 * 60_000;
 
     // hideout 버튼을 이 시간까지 못 찾으면 관찰을 포기한다.
     const HIDEOUT_WAIT_TIMEOUT_MS = 15_000;
@@ -127,7 +115,7 @@
      * SCOPE 목록
      *   INIT     스크립트 시작 / 후킹 설치
      *   UI       오버레이, 토글 버튼
-     *   HOOK     fetch / search 응답 가로채기
+     *   HOOK     fetch 응답 가로채기
      *   LIVE     라이브 소켓 관찰 / 푸시 수신
      *   POE1     POE1 매물 처리
      *   POE2     POE2 매물 처리
@@ -1605,102 +1593,6 @@ text-align: right;
 
 
     /*********************************************************
-     * 매물 출처 (검색 결과 vs 라이브 푸시)
-     *
-     * 거래소는 두 경로 모두 같은 /api/trade(2)/fetch 로 매물 본문을 가져온다.
-     *   수동 검색 / 페이지 최초 로드 → /search 응답(id 목록) → /fetch
-     *   라이브 검색 푸시            → 웹소켓 → /fetch      (/search 를 거치지 않는다)
-     *
-     * 즉 /fetch 응답만 봐서는 둘을 구분할 수 없다. 구분하지 않으면,
-     * 라이브가 꺼진 탭에서 손으로 검색만 해도 60초 이내 매물이 하나라도 있으면
-     * 자동으로 은신처로 날아간다 (스위치는 탭 간 공유라 어느 탭이든 발동한다).
-     *
-     * 그래서 /search 가 돌려준 id 를 기억해 두고, 그 id 로 들어온 매물은
-     * 자동 이동 대상에서 뺀다. /search 응답은 항상 /fetch 보다 먼저 도착한다
-     * (fetch 가 그 id 목록을 써야 하므로 순서가 보장된다).
-     *
-     * 제외는 영구가 아니라 "그 검색에 딸린 fetch 1회" 로 한정한다.
-     * 매물을 fetch 로 실어 오는 순간 기록을 지운다. 같은 매물이 나중에 재등록돼
-     * 라이브로 다시 올라오면 그때는 정상적으로 이동해야 하기 때문이다.
-     * 영구 제외로 두면 한 번 검색에 걸린 매물은 두 번 다시 못 잡는다.
-     *
-     * 끝까지 스크롤하지 않아 fetch 되지 않은 id 는 소비될 일이 없으므로
-     * SEARCH_ORIGIN_TTL_MS 로 만료시킨다. 검색 결과를 한참 뒤에 스크롤하는 경우까지
-     * 덮으려고 넉넉하게 잡았다 — 놓친 이동보다 엉뚱한 이동이 훨씬 나쁘다.
-     *
-     * 알림은 막지 않는다. 손으로 검색해서 띄운 결과에 알림이 오는 건 시끄러울 뿐
-     * 되돌릴 수 없는 동작이 아니다. 게임을 움직이는 쪽만 막는다.
-     *
-     * 후킹이 /search 를 놓치면 예전 동작(구분 없음) 으로 돌아갈 뿐, 라이브 푸시로
-     * 이동하는 본래 기능은 그대로 산다. 안전한 방향으로 실패한다.
-     *********************************************************/
-    function recordSearchResults(json, source) {
-
-        const ids = json?.result;
-
-        if (!Array.isArray(ids)) {
-
-            warn(source, 'search 응답의 result 가 배열이 아니다'
-                 + ' — 자동 이동이 수동 검색 결과에도 걸릴 수 있다', json);
-
-            return;
-
-        }
-
-        const now = Date.now();
-
-        // 소비되지 않고 남은 지난 검색의 찌꺼기를 먼저 걷어낸다.
-        for (const [id, at] of searchOriginIds) {
-
-            if (now - at > SEARCH_ORIGIN_TTL_MS) searchOriginIds.delete(id);
-
-        }
-
-        let added = 0;
-
-        for (const id of ids) {
-
-            if (typeof id !== 'string' || !id) continue;
-
-            searchOriginIds.set(id, now);
-            added++;
-
-        }
-
-        trimOldest(searchOriginIds, MAX_SEARCH_IDS);
-
-        log(source, `search 결과 ${added}건 기록`
-            + ' — 이 id 들은 뒤따르는 fetch 1회에 한해 자동 이동에서 제외');
-
-    }
-
-    // 이 fetch 응답 중 방금 그 검색이 실어 온 id 를 뽑고, 동시에 기록에서 지운다.
-    //
-    // 루프 안이 아니라 미리 한 번에 처리하는 이유:
-    // processTradeResults 는 나이/중복으로 continue 하거나 첫 발동에서 break 하므로,
-    // 루프에 맡기면 응답에 실려 온 id 중 일부만 소비된다. 소비되지 않은 id 는
-    // 만료 전까지 계속 제외돼, 나중에 라이브로 올라와도 이동하지 않는다.
-    function consumeSearchOrigin(results) {
-
-        const fromSearch = new Set();
-
-        for (const r of results) {
-
-            const id = r?.id;
-
-            if (!id || !searchOriginIds.has(id)) continue;
-
-            fromSearch.add(id);
-            searchOriginIds.delete(id);
-
-        }
-
-        return fromSearch;
-
-    }
-
-
-    /*********************************************************
      * 라이브 소켓 (자동 이동 허용 목록)
      *
      * /search 를 가로채 검색 결과를 빼는 방식은 실패했다. 거래소가 검색 응답을
@@ -2026,7 +1918,7 @@ text-align: right;
 
     let unknownTokenReported = false;
 
-    // consumeSearchOrigin 과 같은 이유로 루프 밖에서 한 번에 소비한다.
+    // 루프 밖에서 한 번에 소비한다 (아래 processTradeResults 주석 참고).
     function consumeLivePush(results, url) {
 
         const fromLive = new Set();
@@ -2062,7 +1954,7 @@ text-align: right;
 
         }
 
-        // 2) id 목록 방식. 이쪽은 한 번 쓰면 지운다 (consumeSearchOrigin 참고).
+        // 2) id 목록 방식. 이쪽은 한 번 쓰면 지운다.
         for (const r of results) {
 
             const id = r?.id;
@@ -2079,9 +1971,7 @@ text-align: right;
     }
 
     // 막았을 때 왜 막았는지. 원인마다 대처가 다르므로 뭉뚱그리지 않는다.
-    function liveBlockReason(id, fromSearch) {
-
-        if (fromSearch.has(id)) return '검색 결과로 들어온 매물';
+    function liveBlockReason() {
 
         if (liveSocketCount === 0) {
 
@@ -2112,8 +2002,7 @@ text-align: right;
             }
 
             // 루프에 들어가기 전에 출처를 확정한다. 루프 안에서 하면 continue/break
-            // 때문에 일부 id 가 소비되지 않은 채 남는다 (consumeSearchOrigin 참고).
-            const fromSearch = consumeSearchOrigin(results);
+            // 때문에 일부 id 가 소비되지 않은 채 남는다.
             const fromLive = consumeLivePush(results, url);
 
             for (const r of results) {
@@ -2184,7 +2073,7 @@ text-align: right;
 
                     if (REQUIRE_LIVE_PUSH && !fromLive.has(id)) {
 
-                        log('HIDEOUT', `skip: ${liveBlockReason(id, fromSearch)}`
+                        log('HIDEOUT', `skip: ${liveBlockReason()}`
                             + ` id=${shortId(id)}`);
 
                     } else if (canTriggerHideout(id)) {
@@ -2226,32 +2115,6 @@ text-align: right;
         }
     }
 
-    // 후킹은 걸렸는데 /search 를 못 보는 상황을 구분하기 위한 진단.
-    //
-    // "search 로그가 없다" 만으로는 원인을 좁힐 수 없다.
-    //   (a) 거래소가 검색을 fetch() 가 아닌 경로(XHR 등)로 보낸다  → 여기에 아무것도 안 찍힘
-    //   (b) 검색 엔드포인트 경로명이 예상과 다르다                  → 여기에 그 경로가 찍힘
-    // 경로별로 최초 1회만 남기므로 콘솔이 시끄러워지지 않는다.
-    const seenApiPaths = new Set();
-
-    function logUnhandledApi(url) {
-
-        // 쿼리스트링과 오리진을 떼고, fetch 처럼 경로에 id 가 붙는 경우를 감안해
-        // 앞 3조각만 남긴다: /api/trade/fetch
-        const path = String(url).split('?')[0]
-            .replace(/^https?:\/\/[^/]+/, '');
-
-        const key = path.split('/').slice(0, 4).join('/');
-
-        if (seenApiPaths.has(key)) return;
-
-        seenApiPaths.add(key);
-
-        log('HOOK', `처리 대상 아닌 거래소 API: ${key}`
-            + ' (경로별 최초 1회만 남긴다)');
-
-    }
-
     // =========================
     // Response JSON Hook
     // =========================
@@ -2276,29 +2139,24 @@ text-align: right;
 
                 const url = this.url || '';
 
-                // POE2 는 /api/trade2/..., POE1 은 /api/trade/... 를 쓴다.
+                // POE2 는 /api/trade2/fetch, POE1 은 /api/trade/fetch 를 쓴다.
                 // @match 에 두 게임이 다 들어 있으므로 양쪽을 받는다.
-                const m = url.match(/\/api\/(trade2?)\/(fetch|search)/);
+                //
+                // /search 는 가로채지 않는다. 한때 검색 응답의 id 목록을 받아
+                // "이건 손으로 검색한 결과" 라고 표시하려 했지만, 거래소는 검색
+                // 응답을 Response.prototype.json 으로 읽지 않아 이 후킹에 아예
+                // 걸리지 않는다 (fetch 응답만 잡히고 진단 로그도 전혀 안 남았다).
+                // 라이브 여부는 소켓 토큰 대조로 판별한다 — "라이브 소켓" 참고.
+                const m = url.match(/\/api\/(trade2?)\/fetch/);
 
                 if (m) {
 
                     const game = m[1] === 'trade2' ? 'POE2' : 'POE1';
-                    const kind = m[2];
 
-                    // 형식을 구버전(`POE1 fetch 응답 N건`)과 일부러 다르게 뒀다.
-                    // 콘솔 한 줄만 봐도 어느 버전이 돌고 있는지 알 수 있어야 한다.
                     log('HOOK',
-                        `${game} ${kind} 응답: ${result?.result?.length ?? 0}건`, url);
+                        `${game} fetch 응답: ${result?.result?.length ?? 0}건`, url);
 
-                    // search 가 먼저, fetch 가 나중이다 (fetch 가 search 의 id 목록을
-                    // 써야 하므로). 그래서 여기서 기록해 두면 뒤따르는 fetch 에서
-                    // 출처를 판별할 수 있다.
-                    if (kind === 'search') recordSearchResults(result, game);
-                    else processTradeResults(result, game, url);
-
-                } else if (url.includes('/api/')) {
-
-                    logUnhandledApi(url);
+                    processTradeResults(result, game, url);
 
                 }
 

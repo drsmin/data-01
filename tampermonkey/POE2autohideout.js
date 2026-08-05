@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-007
+// @version      2026-08-05-008
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -288,11 +288,27 @@ user-select: none;
     overlay.onmouseenter = () => { overlay.style.opacity = '1'; };
     overlay.onmouseleave = () => { overlay.style.opacity = '0.9'; };
 
+    // 버튼 두 개가 무엇을 켜고 끄는지는 여기서 한 번만 말한다.
+    // 버튼마다 "자동이동" 을 붙이면 두 번 읽히고 폭만 잡아먹는다.
+    const caption = document.createElement('div');
+
+    caption.className = 'poe-caption';
+
+    caption.textContent = '자동 은신처 이동';
+
+    caption.style.cssText = `
+margin: 0 0 7px;
+color: ${C.muted};
+font-size: 9.5px;
+font-weight: 600;
+letter-spacing: 0.6px;
+`;
+
     const hideoutBtn = document.createElement('button');
 
     hideoutBtn.className = 'poe-ho-btn';
 
-    hideoutBtn.textContent = 'AUTO HO OFF';
+    hideoutBtn.textContent = '모든 탭 사용 OFF';
 
     hideoutBtn.style.cssText = `
 display: block;
@@ -316,7 +332,7 @@ transition: background .15s ease, color .15s ease, box-shadow .15s ease;
 
     tabBtn.className = 'poe-tab-btn';
 
-    tabBtn.textContent = '이 탭 사용';
+    tabBtn.textContent = '이 탭 사용 ON';
 
     tabBtn.style.cssText = `
 display: block;
@@ -400,6 +416,7 @@ letter-spacing: 0.3px;
 text-align: right;
 `;
 
+    overlay.appendChild(caption);
     overlay.appendChild(hideoutBtn);
     overlay.appendChild(tabBtn);
     overlay.appendChild(grid);
@@ -453,12 +470,13 @@ text-align: right;
     };
 
     // 두 스위치의 조합을 한 곳에서 그린다. 각자 자기 버튼만 고치게 두면
-    // "전체 ON + 이 탭 정지" 같은 조합에서 화면이 거짓말을 하게 된다.
+    // "모든 탭 ON + 이 탭 OFF" 같은 조합에서 화면이 거짓말을 하게 된다.
     function renderControls() {
 
         const active = hideoutActive();
 
-        hideoutBtn.textContent = autoHideoutArmed ? 'AUTO HO ON' : 'AUTO HO OFF';
+        hideoutBtn.textContent =
+            autoHideoutArmed ? '모든 탭 사용 ON' : '모든 탭 사용 OFF';
 
         if (autoHideoutArmed) {
 
@@ -479,7 +497,7 @@ text-align: right;
 
         }
 
-        tabBtn.textContent = tabEnabled ? '이 탭 사용' : '이 탭 정지';
+        tabBtn.textContent = tabEnabled ? '이 탭 사용 ON' : '이 탭 사용 OFF';
 
         if (tabEnabled) {
 
@@ -517,7 +535,7 @@ text-align: right;
     // 새로고침하면 기본값(사용)으로 돌아온다 — "임시" 스위치라 그게 맞다.
     function setTabEnabled(state, reason) {
 
-        log('UI', `this tab ${state ? '사용' : '정지'}`
+        log('UI', `이 탭 자동이동 ${state ? 'ON' : 'OFF'}`
             + (reason ? ` — ${reason}` : ''));
 
         tabEnabled = state;
@@ -537,7 +555,7 @@ text-align: right;
     // 자동 해제 / 버튼 클릭 / 다른 탭을 콘솔에서 구분할 수 있어야 한다.
     function applyAutoHideout(state, reason) {
 
-        log('UI', `auto hideout ${state ? 'ON' : 'OFF'}`
+        log('UI', `모든 탭 자동이동 ${state ? 'ON' : 'OFF'}`
             + (reason ? ` — ${reason}` : ''));
 
         autoHideoutArmed = state;

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-04-008
+// @version      2026-08-05-001
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -31,6 +31,11 @@
     let hideoutPending = false;
 
     const usedItemIds = new Set();
+
+    // 검색(/api/trade*/search) 응답이 돌려준 매물 id.
+    // 라이브 소켓이 밀어준 매물과 구분하는 유일한 근거다 — 아래 "매물 출처" 참고.
+    const searchOriginIds = new Set();
+
     let serverAlive = false;
 
     const COOLDOWN_MS = 30_000;
@@ -38,6 +43,11 @@
 
     // usedItemIds 무한 증가 방지: 상한 초과 시 가장 오래된 항목부터 버린다.
     const MAX_USED_IDS = 1000;
+
+    // searchOriginIds 도 같은 방식으로 제한한다. 검색 1회가 수십~수백 건을 돌려주므로
+    // 상한을 더 크게 잡는다. 넘쳐서 오래된 id 가 빠져도 그 매물들은 이미
+    // MAX_ITEM_AGE_MS 에 걸리므로 자동 이동으로 되살아나지 않는다.
+    const MAX_SEARCH_IDS = 5000;
 
     // hideout 버튼을 이 시간까지 못 찾으면 관찰을 포기한다.
     const HIDEOUT_WAIT_TIMEOUT_MS = 15_000;
@@ -76,7 +86,7 @@
      * SCOPE 목록
      *   INIT     스크립트 시작 / 후킹 설치
      *   UI       오버레이, 토글 버튼
-     *   HOOK     fetch 응답 가로채기
+     *   HOOK     fetch / search 응답 가로채기
      *   POE1     POE1 매물 처리
      *   POE2     POE2 매물 처리
      *   HIDEOUT  은신처 버튼 대기 / 클릭
@@ -436,6 +446,18 @@ Last Teleport: ${fmt(lastTeleport)}`;
     // 쿨다운: 마지막 실제 텔레포트로부터 COOLDOWN_MS 가 지나야 다시 발동한다.
     // 어느 탭에서 이동했는지는 상관없다.
     function canTriggerHideout(itemId) {
+
+        // 손으로 누른 검색(또는 페이지 최초 로드)의 결과다. 라이브 푸시가 아니므로
+        // 자동 이동시키지 않는다.
+        if (searchOriginIds.has(itemId)) {
+
+            log('HIDEOUT',
+                `skip: 검색 결과로 들어온 매물 (라이브 푸시 아님)`
+                + ` id=${shortId(itemId)}`);
+
+            return false;
+
+        }
 
         if (hideoutPending) {
 
@@ -905,19 +927,76 @@ Last Teleport: ${fmt(lastTeleport)}`;
     }
 
     // Set 은 삽입 순서를 유지하므로, 상한을 넘으면 앞쪽(가장 오래된)부터 버린다.
+    function trimSet(set, max) {
+
+        if (set.size <= max) return;
+
+        const overflow = set.size - max;
+        let removed = 0;
+
+        for (const old of set) {
+            set.delete(old);
+            if (++removed >= overflow) break;
+        }
+
+    }
+
     function rememberItemId(id) {
 
         usedItemIds.add(id);
+        trimSet(usedItemIds, MAX_USED_IDS);
 
-        if (usedItemIds.size <= MAX_USED_IDS) return;
+    }
 
-        const overflow = usedItemIds.size - MAX_USED_IDS;
-        let removed = 0;
 
-        for (const old of usedItemIds) {
-            usedItemIds.delete(old);
-            if (++removed >= overflow) break;
+    /*********************************************************
+     * 매물 출처 (검색 결과 vs 라이브 푸시)
+     *
+     * 거래소는 두 경로 모두 같은 /api/trade(2)/fetch 로 매물 본문을 가져온다.
+     *   수동 검색 / 페이지 최초 로드 → /search 응답(id 목록) → /fetch
+     *   라이브 검색 푸시            → 웹소켓 → /fetch      (/search 를 거치지 않는다)
+     *
+     * 즉 /fetch 응답만 봐서는 둘을 구분할 수 없다. 구분하지 않으면,
+     * 라이브가 꺼진 탭에서 손으로 검색만 해도 60초 이내 매물이 하나라도 있으면
+     * 자동으로 은신처로 날아간다 (무장 상태는 탭 간 공유라 어느 탭이든 발동한다).
+     *
+     * 그래서 /search 가 돌려준 id 를 기억해 두고, 그 id 로 들어온 매물은
+     * 자동 이동 대상에서 뺀다. /search 응답은 항상 /fetch 보다 먼저 도착한다
+     * (fetch 가 그 id 목록을 써야 하므로 순서가 보장된다).
+     *
+     * 알림은 막지 않는다. 손으로 검색해서 띄운 결과에 알림이 오는 건 시끄러울 뿐
+     * 되돌릴 수 없는 동작이 아니다. 게임을 움직이는 쪽만 막는다.
+     *
+     * 후킹이 /search 를 놓치면 예전 동작(구분 없음) 으로 돌아갈 뿐, 라이브 푸시로
+     * 이동하는 본래 기능은 그대로 산다. 안전한 방향으로 실패한다.
+     *********************************************************/
+    function recordSearchResults(json, source) {
+
+        const ids = json?.result;
+
+        if (!Array.isArray(ids)) {
+
+            warn(source, 'search 응답의 result 가 배열이 아니다'
+                 + ' — 자동 이동이 수동 검색 결과에도 걸릴 수 있다', json);
+
+            return;
+
         }
+
+        let added = 0;
+
+        for (const id of ids) {
+
+            if (typeof id !== 'string' || !id) continue;
+
+            searchOriginIds.add(id);
+            added++;
+
+        }
+
+        trimSet(searchOriginIds, MAX_SEARCH_IDS);
+
+        log(source, `search 결과 ${added}건 기록 — 이 id 들은 자동 이동 대상에서 제외`);
 
     }
 
@@ -998,7 +1077,7 @@ Last Teleport: ${fmt(lastTeleport)}`;
                 /**********************
                  * AUTO HIDEOUT
                  **********************/
-                // 억제는 3단계다: 무장 여부 → hideoutPending → 쿨다운.
+                // 억제는 4단계다: 무장 여부 → 검색 출처 → hideoutPending → 쿨다운.
                 // 이동에 성공하면 simulateHumanClick 이 무장을 해제하므로 여기서 끊긴다.
                 if (autoHideoutArmed && canTriggerHideout(id)) {
 
@@ -1061,17 +1140,23 @@ Last Teleport: ${fmt(lastTeleport)}`;
 
                 const url = this.url || '';
 
-                // POE2 는 /api/trade2/fetch, POE1 은 /api/trade/fetch 를 쓴다.
+                // POE2 는 /api/trade2/..., POE1 은 /api/trade/... 를 쓴다.
                 // @match 에 두 게임이 다 들어 있으므로 양쪽을 받는다.
-                const m = url.match(/\/api\/(trade2?)\/fetch/);
+                const m = url.match(/\/api\/(trade2?)\/(fetch|search)/);
 
                 if (m) {
 
                     const game = m[1] === 'trade2' ? 'POE2' : 'POE1';
+                    const kind = m[2];
 
-                    log('HOOK', `${game} fetch 응답 ${result?.result?.length ?? 0}건`, url);
+                    log('HOOK',
+                        `${game} ${kind} 응답 ${result?.result?.length ?? 0}건`, url);
 
-                    processTradeResults(result, game);
+                    // search 가 먼저, fetch 가 나중이다 (fetch 가 search 의 id 목록을
+                    // 써야 하므로). 그래서 여기서 기록해 두면 뒤따르는 fetch 에서
+                    // 출처를 판별할 수 있다.
+                    if (kind === 'search') recordSearchResults(result, game);
+                    else processTradeResults(result, game);
 
                 }
 

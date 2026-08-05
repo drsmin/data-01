@@ -206,6 +206,15 @@ function makeTab(name, store, clock, src = SRC) {
         await res.json();
     };
 
+    // 수동 검색(또는 페이지 최초 로드)이 먼저 받는 /search 응답.
+    // 본문은 매물 id 문자열 배열이다 (fetch 응답의 객체 배열과 다르다).
+    tab.feedSearch = async (ids, api = 'trade') => {
+        const res = new Response(
+            `https://poe.kakaogames.com/api/${api}/search/poe2/Standard`,
+            { id: 'searchid', complexity: 1, total: ids.length, result: ids });
+        await res.json();
+    };
+
     return tab;
 }
 
@@ -403,6 +412,61 @@ function section(title) {
           P2.logs.some(([, m]) => m.includes('[POE][POE2] trigger')), true);
     check('POE2 로그에 POE1 스코프 없음',
           P2.logs.some(([, m]) => m.includes('[POE][POE1]')), false);
+
+    section('T11: 수동 검색 결과로는 이동하지 않는다 (라이브 푸시만 이동)');
+    // 라이브가 꺼진 탭에서 손으로 검색해도, 무장 상태는 탭 간 공유라 그대로
+    // 발동해버렸다. /search 가 돌려준 id 는 자동 이동 대상에서 빠져야 한다.
+    const storeS = makeSharedStore();
+    const clockS = makeClock();
+
+    const S = makeTab('S', storeS, clockS);
+
+    S.clickToggle();
+    check('S ON', S.armedText(), 'AUTO HO ON');
+
+    const idSearch = '1'.repeat(64);
+    S.addRow(idSearch);
+
+    await S.feedSearch([idSearch]);                        // 수동 검색
+    await S.feed(idSearch, new Date().toISOString());      // 그 결과의 본문 fetch
+    clockS.flush();
+
+    check('검색 결과로는 클릭하지 않음', S.clicks, []);
+    check('무장 상태 유지 (해제되지 않음)', S.armedText(), 'AUTO HO ON');
+    check('검색 출처 skip 로그 있음',
+          S.logs.some(([, m]) =>
+              m.includes('skip: 검색 결과로 들어온 매물')), true);
+    check('알림은 그대로 나감 (검색이 막는 건 이동뿐)',
+          S.logs.some(([, m]) => m.includes('trigger')), true);
+
+    section('T12: 같은 탭에서 라이브 푸시가 오면 정상 이동한다');
+    // T11 의 억제가 탭 전체를 죽이면 안 된다. /search 를 거치지 않은 id 는 그대로 발동.
+    const idLive = '2'.repeat(64);
+    S.addRow(idLive);
+    await S.feed(idLive, new Date().toISOString());        // 웹소켓 푸시 → fetch
+    clockS.flush();
+
+    check('라이브 푸시는 클릭됨', S.clicks, [idLive]);
+    check('이동 후 자동 해제', S.armedText(), 'AUTO HO OFF');
+
+    section('T13: 검색 출처 판별이 POE2 경로에서도 동작한다');
+    const storeS2 = makeSharedStore();
+    const clockS2 = makeClock();
+
+    const S2 = makeTab('S2', storeS2, clockS2);
+    S2.clickToggle();
+
+    const id2Search = '3'.repeat(64);
+    S2.addRow(id2Search);
+
+    await S2.feedSearch([id2Search], 'trade2');
+    await S2.feed(id2Search, new Date().toISOString(), 'trade2');
+    clockS2.flush();
+
+    check('POE2 검색 결과로도 클릭하지 않음', S2.clicks, []);
+    check('POE2 search 응답이 [POE][POE2] 스코프로 기록됨',
+          S2.logs.some(([, m]) =>
+              m.includes('[POE][POE2] search 결과')), true);
 
     section('A 탭 로그 전문 (형식 눈으로 확인용)');
     for (const [lvl, m] of A.logs) console.log(`  [${lvl}] ${m}`);

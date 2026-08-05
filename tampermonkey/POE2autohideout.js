@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-016
+// @version      2026-08-05-017
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -971,9 +971,17 @@ text-align: right;
 
     // 결과 행은 <div class="row" data-id="<fetch 응답의 r.id>"> 형태다.
     //
-    // 검증 범위: POE1(/trade) 의 실제 응답과 DOM 을 짝으로 대조해
-    //   data-id === result[].id === result[].item.id 를 확인했고, 브라우저에서도 동작 확인.
-    // POE2(/trade2) 마크업은 아직 미확인이다. 새 시즌에서 확인할 것.
+    // 검증 범위
+    //   POE1(/trade)  — 실제 응답과 DOM 을 짝으로 대조해
+    //     data-id === result[].id === result[].item.id 확인. 브라우저에서도 동작 확인.
+    //   POE2(/trade2) — 실제 결과 행 outerHTML 로 확인. 마크업이 POE1 과 같다.
+    //     <div class="row" data-id="898efb…(64자리 16진수)">
+    //       … <button class="btn btn-xs btn-default direct-btn">은신처로 이동</button>
+    //     클래스가 여럿 붙지만 direct-btn 이 있으므로 셀렉터가 그대로 물린다.
+    //     행 안의 다른 버튼은 ignore-btn(플레이어 차단)이라 겹치지 않는다.
+    //     (라이브 푸시로 그려진 행이 아니라 검색 결과 행에서 확인했다. 같은
+    //      컴포넌트가 그리므로 같을 것으로 보지만, 거기까지가 확인된 범위다.)
+    //
     // 구조가 다르면 알림은 그대로 동작하고(JSON 기반) 자동 은신처만 실패하며,
     // 대기 타임아웃에서 "행이 렌더링되지 않음" 경고로 드러난다.
     //

@@ -298,6 +298,11 @@ function makeTab(name, store, clock, src = SRC, opts = {}) {
     tab.clickTabToggle = () => tab.tabBtn.onclick();
 
     // 특정 id 의 결과 행이 이미 렌더링돼 있는 것처럼 만든다.
+    // 실제 마크업(POE1·POE2 동일):
+    //   <div class="row" data-id="<64자리 16진수>">
+    //     … <button class="btn btn-xs btn-default direct-btn">은신처로 이동</button>
+    //     … <button class="btn btn-default ignore-btn">플레이어 차단</button>
+    // 클래스가 여럿 붙으므로 스텁도 정확한 셀렉터에만 응답하게 둔다.
     tab.addRow = (id) => {
         const button = {
             getBoundingClientRect: () => ({ left: 0, top: 0, width: 10, height: 10 }),

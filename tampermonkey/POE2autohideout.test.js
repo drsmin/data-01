@@ -239,12 +239,30 @@ function makeTab(name, store, clock, src = SRC, opts = {}) {
     const byClass = (c) => created.find((e) => e.className === c);
 
     tab.overlay = byClass('poe-overlay');
+    tab.pill = byClass('poe-pill');
+    tab.panel = byClass('poe-panel');
+    tab.caption = byClass('poe-caption');
     tab.btn = byClass('poe-ho-btn');
     tab.tabBtn = byClass('poe-tab-btn');
 
     // 카드가 호박색으로 빛나고 있는가 = "지금 여기서 실제로 이동한다".
     tab.cardGlowing = () =>
-        String(tab.overlay.style.boxShadow).includes('240, 160, 32');
+        String(tab.panel.style.boxShadow).includes('240, 160, 32');
+
+    tab.isCollapsed = () => tab.panel.style.display === 'none';
+    tab.pillText = () => tab.pill.textContent;
+
+    // 마우스로 끌기. document 리스너를 그대로 태운다.
+    tab.dragBy = (dx, dy) => {
+        tab.overlay.onmousedown({ button: 0, clientX: 100, clientY: 100 });
+        const fire = (type, x, y) => {
+            for (const l of docListeners) {
+                if (l.type === type) l.fn({ clientX: x, clientY: y, preventDefault() {} });
+            }
+        };
+        fire('mousemove', 100 + dx, 100 + dy);
+        fire('mouseup', 100 + dx, 100 + dy);
+    };
     tab.value = (key) => byClass(`poe-v-${key}`);
 
     // body 가 생기고 DOMContentLoaded 가 발화한 시점.
@@ -956,6 +974,78 @@ function section(title) {
     check('id 콤마 경로로는 이동하지 않음', X.clicks, []);
     check('토큰 경고를 남기지 않는다 (토큰 모양이 아니므로)',
           X.logs.some(([lvl]) => lvl === 'warn'), false);
+
+    section('T31: 기본은 접힘 — 화면을 거의 가리지 않는다');
+    // 기본 자리(우하단)가 하필 결과 행의 은신처 버튼과 겹친다.
+    // 상태를 보여주는 물건이 정작 눌러야 할 버튼을 가리면 안 된다.
+    const storeO = makeSharedStore();
+    const clockO = makeClock();
+
+    const O = makeTab('O', storeO, clockO);
+
+    check('접힌 채로 시작', O.isCollapsed(), true);
+    check('알약이 상태를 말한다', O.pillText(), '● 이동 OFF');
+
+    O.pill.onclick();
+    check('알약을 누르면 펼쳐진다', O.isCollapsed(), false);
+
+    O.caption.onclick();
+    check('캡션을 누르면 접힌다', O.isCollapsed(), true);
+
+    section('T32: 접힌 알약만 봐도 위험한지 알 수 있다');
+    // 접어두고 쓰는 게 기본이므로, 펼치지 않고도 지금 끌려갈 수 있는지 보여야 한다.
+    O.clickToggle();                       // 모든 탭 ON (소켓은 없음)
+    check('켰는데 소켓이 없으면 경고', O.pillText(), '● 소켓 없음');
+
+    O.livePushToken('aaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbb.cccccccccccccccc');
+    check('소켓이 살아 있으면 이동 ON', O.pillText(), '● 이동 ON');
+
+    O.clickTabToggle();                    // 이 탭만 정지
+    check('이 탭만 빠지면 그렇게 말한다', O.pillText(), '● 이 탭 OFF');
+
+    section('T33: 끌어서 옮기면 위치를 기억한다');
+    // 어느 자리가 안전한지는 사이트 레이아웃과 창 크기에 달렸다. 사람이 고른다.
+    const storeDr = makeSharedStore();
+    const clockDr = makeClock();
+
+    const Dr = makeTab('Dr', storeDr, clockDr);
+
+    check('기본 위치', [Dr.overlay.style.right, Dr.overlay.style.bottom],
+          ['20px', '80px']);
+
+    Dr.dragBy(-30, -50);                   // 왼쪽 아래로 → right/bottom 증가
+
+    check('끈 만큼 옮겨진다',
+          [Dr.overlay.style.right, Dr.overlay.style.bottom], ['50px', '130px']);
+    check('위치 저장 로그',
+          Dr.logs.some(([, m]) => m.includes('오버레이 위치 저장')), true);
+
+    const Dr2 = makeTab('Dr2', storeDr, clockDr);
+    check('새 탭이 저장된 위치를 이어받는다',
+          [Dr2.overlay.style.right, Dr2.overlay.style.bottom], ['50px', '130px']);
+
+    section('T34: 옮기려던 손짓이 스위치를 건드리지 않는다');
+    // 버튼 위에서 끌기 시작해도 되게 했으므로, 이동 뒤 click 은 삼켜야 한다.
+    const storeDg = makeSharedStore();
+    const clockDg = makeClock();
+
+    const Dg2 = makeTab('Dg2', storeDg, clockDg);
+    Dg2.pill.onclick();                    // 펼쳐두고
+
+    const armedBefore = Dg2.armedText();
+
+    Dg2.dragBy(-40, 0);
+    Dg2.btn.onclick();                     // 이동 직후 브라우저가 쏘는 click
+
+    check('이동 뒤 click 은 무시된다', Dg2.armedText(), armedBefore);
+
+    Dg2.btn.onclick();                     // 다음 클릭은 정상 동작
+    check('그 다음 클릭은 먹힌다', Dg2.armedText(), '모든 탭 사용 ON');
+
+    check('4px 미만은 이동이 아니다', (() => {
+        Dg2.dragBy(1, 1);
+        return Dg2.overlay.style.right;
+    })(), '60px');
 
     section('A 탭 로그 전문 (형식 눈으로 확인용)');
     for (const [lvl, m] of A.logs) console.log(`  [${lvl}] ${m}`);

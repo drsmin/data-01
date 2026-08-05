@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-010
+// @version      2026-08-05-011
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -237,12 +237,20 @@
     /*********************************************************
      * UI 오버레이
      *
-     * 거래소 위에 얹히는 패널이라 세 가지를 지킨다.
-     *   1. 페이지를 가리지 않는다  — 평소 반투명, 마우스를 올리면 선명해진다
-     *   2. 곁눈질로 읽힌다        — 무장 중이면 카드 전체가 호박색으로 빛난다
-     *   3. 숫자가 안 흔들린다      — 시각은 tabular-nums 로 자리를 고정한다
+     * 거래소 위에 얹히는 패널이라 네 가지를 지킨다.
+     *   1. 자리를 거의 안 잡는다  — 기본은 작은 알약. 펼쳐야 카드가 된다
+     *   2. 비켜줄 수 있다        — 끌어서 원하는 자리로. 위치는 기억한다
+     *   3. 곁눈질로 읽힌다        — 무장 중이면 호박색, 접혀 있어도 색은 보인다
+     *   4. 숫자가 안 흔들린다      — 시각은 tabular-nums 로 자리를 고정한다
      *
-     * 색은 어두운 유리판 한 장에 상태색 세 개(호박/초록/빨강)만 쓴다.
+     * 1·2 는 실제 불편에서 나왔다. 기본 자리(우하단)가 하필 결과 행의 은신처
+     * 버튼과 겹쳐서, 상태를 보여주는 물건이 정작 눌러야 할 버튼을 가렸다.
+     *
+     * 구조: overlay(투명한 위치 잡이) > pill(접힘) | panel(펼침).
+     * 껍데기를 overlay 가 아니라 pill/panel 이 각각 갖는다. 그래야 접힘/펼침과
+     * 무장 광채가 서로 스타일을 덮어쓰며 싸우지 않는다.
+     *
+     * 색은 어두운 유리판에 상태색 세 개(호박/초록/빨강)만 쓴다.
      * 클래스명은 테스트가 노드를 찾는 손잡이다 (생성 순서에 기대지 않게).
      *********************************************************/
     const C = {
@@ -257,36 +265,124 @@
     const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,'
         + ' "Helvetica Neue", Arial, sans-serif';
 
+    const CARD_BG = 'rgba(18, 20, 26, 0.92)';
+    const CARD_BORDER = '1px solid rgba(255, 255, 255, 0.10)';
+    const CARD_SHADOW = '0 8px 28px rgba(0, 0, 0, 0.45)';
+    const GLOW_BORDER = '1px solid rgba(240, 160, 32, 0.45)';
+    const GLOW_SHADOW = CARD_SHADOW + ', 0 0 0 1px rgba(240, 160, 32, 0.18)';
+
+    // 접힘 여부와 위치. 탭을 새로 열어도 같은 자리에 있어야 하므로 저장한다.
+    const LS_UI = 'poeAutoHideout.ui';   // {c:접힘, r:right px, b:bottom px}
+
+    const UI_DEFAULT_POS = { right: 20, bottom: 80 };
+
+    let uiCollapsed = true;              // 기본은 접힘 — 가리지 않는 게 우선이다
+    let uiPos = { right: UI_DEFAULT_POS.right, bottom: UI_DEFAULT_POS.bottom };
+
+    function readUiPrefs() {
+
+        const raw = lsRead(LS_UI);
+
+        if (!raw) return;
+
+        try {
+
+            const o = JSON.parse(raw);
+
+            if (typeof o.c === 'boolean') uiCollapsed = o.c;
+
+            if (Number.isFinite(o.r) && Number.isFinite(o.b)) {
+                uiPos = { right: o.r, bottom: o.b };
+            }
+
+        } catch (e) {
+
+            warn('UI', '저장된 오버레이 설정을 읽지 못했다 — 기본값으로 시작한다', e);
+
+        }
+
+    }
+
+    function saveUiPrefs() {
+
+        lsWrite(LS_UI, JSON.stringify({
+            c: uiCollapsed,
+            r: Math.round(uiPos.right),
+            b: Math.round(uiPos.bottom)
+        }));
+
+    }
+
+    readUiPrefs();
+
+    // overlay 는 위치만 잡는 투명한 껍데기다. 보이는 것은 pill 과 panel 이 갖는다.
     const overlay = document.createElement('div');
 
     overlay.className = 'poe-overlay';
 
     overlay.style.cssText = `
 position: fixed;
-bottom: 80px;
-right: 20px;
 z-index: 999999;
-box-sizing: border-box;
-width: 236px;
-padding: 12px;
-background: rgba(18, 20, 26, 0.92);
-backdrop-filter: blur(10px);
--webkit-backdrop-filter: blur(10px);
-border: 1px solid rgba(255, 255, 255, 0.10);
-border-radius: 12px;
-box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
 color: ${C.text};
 font-family: ${FONT};
 font-size: 11px;
 line-height: 1.5;
-opacity: 0.9;
-transition: opacity .15s ease, box-shadow .25s ease, border-color .25s ease;
 user-select: none;
 `;
 
+    // 접힘 상태. 이 크기면 결과 행 하나를 겨우 스치는 정도다.
+    const pill = document.createElement('button');
+
+    pill.className = 'poe-pill';
+
+    pill.style.cssText = `
+display: block;
+padding: 5px 10px;
+background: ${CARD_BG};
+backdrop-filter: blur(10px);
+-webkit-backdrop-filter: blur(10px);
+border: ${CARD_BORDER};
+border-radius: 999px;
+box-shadow: ${CARD_SHADOW};
+font-family: inherit;
+font-size: 10px;
+font-weight: 700;
+letter-spacing: 0.4px;
+white-space: nowrap;
+cursor: pointer;
+opacity: 0.85;
+transition: opacity .15s ease, border-color .25s ease, box-shadow .25s ease;
+`;
+
+    // 펼침 상태.
+    const panel = document.createElement('div');
+
+    panel.className = 'poe-panel';
+
+    panel.style.cssText = `
+box-sizing: border-box;
+width: 236px;
+padding: 12px;
+background: ${CARD_BG};
+backdrop-filter: blur(10px);
+-webkit-backdrop-filter: blur(10px);
+border: ${CARD_BORDER};
+border-radius: 12px;
+box-shadow: ${CARD_SHADOW};
+opacity: 0.94;
+transition: opacity .15s ease, box-shadow .25s ease, border-color .25s ease;
+`;
+
     // 평소엔 한 발 물러나 있다가 볼 때만 또렷해진다.
-    overlay.onmouseenter = () => { overlay.style.opacity = '1'; };
-    overlay.onmouseleave = () => { overlay.style.opacity = '0.9'; };
+    overlay.onmouseenter = () => {
+        pill.style.opacity = '1';
+        panel.style.opacity = '1';
+    };
+
+    overlay.onmouseleave = () => {
+        pill.style.opacity = '0.85';
+        panel.style.opacity = '0.94';
+    };
 
     // 버튼 두 개가 무엇을 켜고 끄는지는 여기서 한 번만 말한다.
     // 버튼마다 "자동이동" 을 붙이면 두 번 읽히고 폭만 잡아먹는다.
@@ -294,7 +390,7 @@ user-select: none;
 
     caption.className = 'poe-caption';
 
-    caption.textContent = '자동 은신처 이동';
+    caption.textContent = '자동 은신처 이동          접기 ─';
 
     caption.style.cssText = `
 margin: 0 0 7px;
@@ -302,6 +398,7 @@ color: ${C.muted};
 font-size: 9.5px;
 font-weight: 600;
 letter-spacing: 0.6px;
+cursor: pointer;
 `;
 
     const hideoutBtn = document.createElement('button');
@@ -416,11 +513,14 @@ letter-spacing: 0.3px;
 text-align: right;
 `;
 
-    overlay.appendChild(caption);
-    overlay.appendChild(hideoutBtn);
-    overlay.appendChild(tabBtn);
-    overlay.appendChild(grid);
-    overlay.appendChild(footer);
+    panel.appendChild(caption);
+    panel.appendChild(hideoutBtn);
+    panel.appendChild(tabBtn);
+    panel.appendChild(grid);
+    panel.appendChild(footer);
+
+    overlay.appendChild(pill);
+    overlay.appendChild(panel);
 
     // 오버레이가 못 붙어도 알림/텔레포트는 계속 동작해야 한다.
     // (status 는 분리된 노드로 남아 updateStatus 가 그대로 쓴다.)
@@ -459,15 +559,158 @@ text-align: right;
      *********************************************************/
     hideoutBtn.onclick = () => {
 
+        if (swallowClickAfterDrag()) return;
+
         setAutoHideout(!autoHideoutArmed, '버튼 클릭');
 
     };
 
     tabBtn.onclick = () => {
 
+        if (swallowClickAfterDrag()) return;
+
         setTabEnabled(!tabEnabled, '버튼 클릭');
 
     };
+
+    pill.onclick = () => {
+
+        if (swallowClickAfterDrag()) return;
+
+        setCollapsed(false);
+
+    };
+
+    caption.onclick = () => {
+
+        if (swallowClickAfterDrag()) return;
+
+        setCollapsed(true);
+
+    };
+
+    function setCollapsed(state) {
+
+        uiCollapsed = state;
+
+        renderCollapsed();
+        saveUiPrefs();
+
+    }
+
+    function renderCollapsed() {
+
+        pill.style.display = uiCollapsed ? 'block' : 'none';
+        panel.style.display = uiCollapsed ? 'none' : 'block';
+
+    }
+
+    function applyUiPos() {
+
+        overlay.style.right = `${Math.round(uiPos.right)}px`;
+        overlay.style.bottom = `${Math.round(uiPos.bottom)}px`;
+
+    }
+
+
+    /*********************************************************
+     * 끌어서 옮기기
+     *
+     * 기본 자리가 하필 은신처 버튼과 겹친다는 게 출발점이다. 어느 자리가
+     * 안전한지는 사이트 레이아웃과 창 크기에 달렸으니, 고르는 건 사람에게 맡긴다.
+     *
+     * 버튼 위에서도 끌 수 있게 하되, 4px 을 넘게 움직였을 때만 이동으로 친다.
+     * 그러지 않으면 손이 살짝 흔들린 토글이 전부 이동이 되거나 그 반대가 된다.
+     * 이동으로 판정되면 뒤따르는 click 은 삼킨다 — 옮기려다 껐다 켜지면 곤란하다.
+     *********************************************************/
+    const DRAG_THRESHOLD_PX = 4;
+
+    let dragState = null;
+    let dragJustFinished = false;
+
+    function swallowClickAfterDrag() {
+
+        if (!dragJustFinished) return false;
+
+        dragJustFinished = false;
+        return true;
+
+    }
+
+    function clamp(v, lo, hi) {
+
+        return v < lo ? lo : (v > hi ? hi : v);
+
+    }
+
+    // 창 밖으로 끌고 나가 다시 못 잡는 일이 없게 가둔다.
+    function viewport() {
+
+        const w = (typeof window !== 'undefined' && window.innerWidth) || 1920;
+        const h = (typeof window !== 'undefined' && window.innerHeight) || 1080;
+
+        return { w, h };
+
+    }
+
+    overlay.onmousedown = (e) => {
+
+        if (!e || e.button !== 0) return;
+
+        dragState = {
+            x: e.clientX,
+            y: e.clientY,
+            right: uiPos.right,
+            bottom: uiPos.bottom,
+            moved: false
+        };
+
+    };
+
+    function onDragMove(e) {
+
+        if (!dragState) return;
+
+        const dx = e.clientX - dragState.x;
+        const dy = e.clientY - dragState.y;
+
+        if (!dragState.moved
+            && Math.abs(dx) + Math.abs(dy) < DRAG_THRESHOLD_PX) return;
+
+        dragState.moved = true;
+
+        const { w, h } = viewport();
+
+        // right/bottom 기준이라 마우스와 부호가 반대다.
+        uiPos.right = clamp(dragState.right - dx, 0, Math.max(0, w - 40));
+        uiPos.bottom = clamp(dragState.bottom - dy, 0, Math.max(0, h - 30));
+
+        applyUiPos();
+
+        if (e.preventDefault) e.preventDefault();
+
+    }
+
+    function onDragEnd() {
+
+        if (!dragState) return;
+
+        const moved = dragState.moved;
+
+        dragState = null;
+
+        if (!moved) return;
+
+        dragJustFinished = true;
+        saveUiPrefs();
+
+        log('UI', `오버레이 위치 저장 (right ${Math.round(uiPos.right)},`
+            + ` bottom ${Math.round(uiPos.bottom)})`);
+
+    }
+
+    document.addEventListener('mousemove', onDragMove);
+    document.addEventListener('mouseup', onDragEnd);
 
     // 두 스위치의 조합을 한 곳에서 그린다. 각자 자기 버튼만 고치게 두면
     // "모든 탭 ON + 이 탭 OFF" 같은 조합에서 화면이 거짓말을 하게 된다.
@@ -523,19 +766,10 @@ text-align: right;
 
         // 카드가 빛나는 건 "지금 여기서 실제로 이동한다" 는 뜻이어야 한다.
         // 전체만 켜진 상태에서 빛나면 재워둔 탭이 무장한 것처럼 보인다.
-        if (active) {
+        panel.style.border = active ? GLOW_BORDER : CARD_BORDER;
+        panel.style.boxShadow = active ? GLOW_SHADOW : CARD_SHADOW;
 
-            overlay.style.borderColor = 'rgba(240, 160, 32, 0.45)';
-            overlay.style.boxShadow =
-                '0 8px 28px rgba(0, 0, 0, 0.45),'
-                + ' 0 0 0 1px rgba(240, 160, 32, 0.18)';
-
-        } else {
-
-            overlay.style.borderColor = 'rgba(255, 255, 255, 0.10)';
-            overlay.style.boxShadow = '0 8px 28px rgba(0, 0, 0, 0.45)';
-
-        }
+        renderPill();
 
     }
 
@@ -592,6 +826,42 @@ text-align: right;
     // 서버 헬스체크 콜백이 'Notified' 를 즉시 덮어쓰지 않도록 마지막 상태를 기억한다.
     let statusText = 'Running';
 
+    // 접힌 알약 하나로 상태를 말한다. 펼치지 않아도 지금 위험한지 알아야 한다.
+    //   이동 ON   — 지금 이 탭에서 실제로 끌려갈 수 있다 (호박)
+    //   이 탭 OFF — 모든 탭은 켜져 있지만 여기만 빠져 있다 (빨강)
+    //   소켓 없음 — 켜뒀는데 라이브 신호가 없다. 켜진 줄 알면 낭패다 (빨강)
+    //   이동 OFF  — 꺼져 있다 (회색)
+    function renderPill() {
+
+        if (hideoutActive()) {
+
+            if (REQUIRE_LIVE_PUSH && liveSocketCount === 0) {
+
+                pill.textContent = '● 소켓 없음';
+                pill.style.color = C.red;
+                pill.style.border = '1px solid rgba(248, 81, 73, 0.45)';
+
+            } else {
+
+                pill.textContent = '● 이동 ON';
+                pill.style.color = C.amber;
+                pill.style.border = GLOW_BORDER;
+
+            }
+
+            pill.style.boxShadow = GLOW_SHADOW;
+
+            return;
+
+        }
+
+        pill.textContent = autoHideoutArmed ? '● 이 탭 OFF' : '● 이동 OFF';
+        pill.style.color = autoHideoutArmed ? C.red : C.muted;
+        pill.style.border = CARD_BORDER;
+        pill.style.boxShadow = CARD_SHADOW;
+
+    }
+
     // 값 + 색을 함께 쓴다. 색만으로 뜻을 전하지 않도록 글자도 항상 같이 바꾼다.
     function setValue(node, text, color) {
 
@@ -629,7 +899,13 @@ text-align: right;
         setValue(vAlert, fmt(lastAlert), lastAlert ? C.text : C.faint);
         setValue(vTeleport, fmt(lastTeleport), lastTeleport ? C.text : C.faint);
 
+        // 소켓이 죽고 사는 건 알약에도 나타나야 한다 — 접어둔 채로 쓰는 게 기본이라.
+        renderPill();
+
     }
+
+    applyUiPos();
+    renderCollapsed();
 
     updateStatus('Running');
 

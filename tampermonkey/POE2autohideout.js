@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-005
+// @version      2026-08-05-006
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -25,7 +25,24 @@
     let lastTeleport = null;   // 실제 hideout 클릭 시각
     let lastAlert = null;      // 마지막 알림 시각
 
+    // 자동 이동 스위치는 둘이다. 실효 상태는 두 개가 모두 켜졌을 때뿐이다.
+    //
+    //   autoHideoutArmed — 전체 무장. 탭 간 공유되고 localStorage 에 남는다.
+    //                      기본값 OFF.
+    //   tabEnabled       — 이 탭만 임시로 빼두는 스위치. 공유하지 않고 저장도
+    //                      하지 않는다. 기본값 사용(ON), 새로고침하면 되돌아온다.
+    //
+    // 왜 나누나: 여러 탭에 서로 다른 검색을 띄워두고 그중 한 탭만 잠깐
+    // 재우고 싶은데, 전체를 끄면 다른 탭까지 같이 죽는다.
     let autoHideoutArmed = false;
+    let tabEnabled = true;
+
+    // 이동을 막는 건 자동 이동뿐이다. 알림은 어느 쪽을 꺼도 그대로 나간다.
+    function hideoutActive() {
+
+        return autoHideoutArmed && tabEnabled;
+
+    }
 
     // 텔레포트가 진행 중(버튼 대기 또는 클릭 예약)인지. 트리거가 연달아 와도 클릭이 중첩되지 않게 막는다.
     let hideoutPending = false;
@@ -281,7 +298,7 @@ user-select: none;
 display: block;
 box-sizing: border-box;
 width: 100%;
-margin: 0 0 10px;
+margin: 0 0 6px;
 padding: 8px 10px;
 font-family: inherit;
 font-size: 11px;
@@ -291,6 +308,30 @@ cursor: pointer;
 border: none;
 border-radius: 8px;
 transition: background .15s ease, color .15s ease, box-shadow .15s ease;
+`;
+
+    // 이 탭만 재우는 스위치. 전체 스위치보다 한 급 작고 조용하게 — 주된 조작은
+    // 전체 쪽이고, 이건 예외 상황에만 건드리는 물건이다.
+    const tabBtn = document.createElement('button');
+
+    tabBtn.className = 'poe-tab-btn';
+
+    tabBtn.textContent = '이 탭 사용';
+
+    tabBtn.style.cssText = `
+display: block;
+box-sizing: border-box;
+width: 100%;
+margin: 0 0 10px;
+padding: 5px 8px;
+font-family: inherit;
+font-size: 10px;
+font-weight: 600;
+letter-spacing: 0.4px;
+cursor: pointer;
+background: transparent;
+border-radius: 6px;
+transition: background .15s ease, color .15s ease, border-color .15s ease;
 `;
 
     const grid = document.createElement('div');
@@ -360,6 +401,7 @@ text-align: right;
 `;
 
     overlay.appendChild(hideoutBtn);
+    overlay.appendChild(tabBtn);
     overlay.appendChild(grid);
     overlay.appendChild(footer);
 
@@ -404,6 +446,90 @@ text-align: right;
 
     };
 
+    tabBtn.onclick = () => {
+
+        setTabEnabled(!tabEnabled, '버튼 클릭');
+
+    };
+
+    // 두 스위치의 조합을 한 곳에서 그린다. 각자 자기 버튼만 고치게 두면
+    // "전체 ON + 이 탭 정지" 같은 조합에서 화면이 거짓말을 하게 된다.
+    function renderControls() {
+
+        const active = hideoutActive();
+
+        hideoutBtn.textContent = autoHideoutArmed ? 'AUTO HO ON' : 'AUTO HO OFF';
+
+        if (autoHideoutArmed) {
+
+            hideoutBtn.style.background =
+                'linear-gradient(180deg, #f7bb52 0%, #e8961a 100%)';
+            hideoutBtn.style.color = '#1a1206';
+            hideoutBtn.style.boxShadow = '0 2px 10px rgba(240, 160, 32, 0.30)';
+
+            // 전체는 켜져 있지만 이 탭이 빠져 있으면 흐리게 — 여기선 안 움직인다.
+            hideoutBtn.style.opacity = tabEnabled ? '1' : '0.4';
+
+        } else {
+
+            hideoutBtn.style.background = '#262a33';
+            hideoutBtn.style.color = C.muted;
+            hideoutBtn.style.boxShadow = 'none';
+            hideoutBtn.style.opacity = '1';
+
+        }
+
+        tabBtn.textContent = tabEnabled ? '이 탭 사용' : '이 탭 정지';
+
+        if (tabEnabled) {
+
+            tabBtn.style.border = '1px solid rgba(255, 255, 255, 0.10)';
+            tabBtn.style.color = C.muted;
+            tabBtn.style.background = 'transparent';
+
+        } else {
+
+            tabBtn.style.border = '1px solid rgba(248, 81, 73, 0.45)';
+            tabBtn.style.color = C.red;
+            tabBtn.style.background = 'rgba(248, 81, 73, 0.08)';
+
+        }
+
+        // 카드가 빛나는 건 "지금 여기서 실제로 이동한다" 는 뜻이어야 한다.
+        // 전체만 켜진 상태에서 빛나면 재워둔 탭이 무장한 것처럼 보인다.
+        if (active) {
+
+            overlay.style.borderColor = 'rgba(240, 160, 32, 0.45)';
+            overlay.style.boxShadow =
+                '0 8px 28px rgba(0, 0, 0, 0.45),'
+                + ' 0 0 0 1px rgba(240, 160, 32, 0.18)';
+
+        } else {
+
+            overlay.style.borderColor = 'rgba(255, 255, 255, 0.10)';
+            overlay.style.boxShadow = '0 8px 28px rgba(0, 0, 0, 0.45)';
+
+        }
+
+    }
+
+    // 이 탭만 재우거나 깨운다. 저장소에 쓰지 않으므로 다른 탭은 영향받지 않고,
+    // 새로고침하면 기본값(사용)으로 돌아온다 — "임시" 스위치라 그게 맞다.
+    function setTabEnabled(state, reason) {
+
+        log('UI', `this tab ${state ? '사용' : '정지'}`
+            + (reason ? ` — ${reason}` : ''));
+
+        tabEnabled = state;
+
+        // 재우는 순간 대기 중이거나 예약된 이동도 함께 취소한다.
+        // 안 그러면 방금 정지시켰는데 몇 초 뒤에 끌려간다.
+        if (!state) cancelHideout();
+
+        renderControls();
+
+    }
+
     // 이 탭에만 상태를 적용한다. 저장소에 쓰지 않으므로 다른 탭에서 온 변경을
     // 반영할 때 쓴다 (여기서 쓰면 탭끼리 서로 되쏘며 무한 반복한다).
     //
@@ -420,32 +546,7 @@ text-align: right;
         // 다른 탭이 껐을 때도 이 경로를 타므로 예약된 클릭이 확실히 취소된다.
         if (!state) cancelHideout();
 
-        hideoutBtn.textContent = state ? 'AUTO HO ON' : 'AUTO HO OFF';
-
-        // 무장은 "지금 이 화면이 나를 게임 밖으로 끌어낼 수 있다" 는 뜻이다.
-        // 버튼만 바꾸지 않고 카드 전체를 물들여, 다른 창을 보다가도 눈에 띄게 한다.
-        if (state) {
-
-            hideoutBtn.style.background =
-                'linear-gradient(180deg, #f7bb52 0%, #e8961a 100%)';
-            hideoutBtn.style.color = '#1a1206';
-            hideoutBtn.style.boxShadow = '0 2px 10px rgba(240, 160, 32, 0.30)';
-
-            overlay.style.borderColor = 'rgba(240, 160, 32, 0.45)';
-            overlay.style.boxShadow =
-                '0 8px 28px rgba(0, 0, 0, 0.45),'
-                + ' 0 0 0 1px rgba(240, 160, 32, 0.18)';
-
-        } else {
-
-            hideoutBtn.style.background = '#262a33';
-            hideoutBtn.style.color = C.muted;
-            hideoutBtn.style.boxShadow = 'none';
-
-            overlay.style.borderColor = 'rgba(255, 255, 255, 0.10)';
-            overlay.style.boxShadow = '0 8px 28px rgba(0, 0, 0, 0.45)';
-
-        }
+        renderControls();
 
     }
 
@@ -1537,9 +1638,10 @@ text-align: right;
                 /**********************
                  * AUTO HIDEOUT
                  **********************/
-                // 억제는 4단계다: 무장 여부 → 라이브 푸시 확인 → hideoutPending → 쿨다운.
+                // 억제는 4단계다:
+                //   실효 무장(전체 ∧ 이 탭) → 라이브 푸시 확인 → hideoutPending → 쿨다운
                 // 이동에 성공하면 simulateHumanClick 이 무장을 해제하므로 여기서 끊긴다.
-                if (autoHideoutArmed) {
+                if (hideoutActive()) {
 
                     if (REQUIRE_LIVE_PUSH && !fromLive.has(id)) {
 

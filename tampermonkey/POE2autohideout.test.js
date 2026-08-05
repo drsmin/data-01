@@ -228,7 +228,13 @@ function makeTab(name, store, clock, src = SRC, opts = {}) {
     // 생성 순서가 아니라 클래스명으로 찾는다. 오버레이에 노드가 늘어도 안 깨진다.
     const byClass = (c) => created.find((e) => e.className === c);
 
+    tab.overlay = byClass('poe-overlay');
     tab.btn = byClass('poe-ho-btn');
+    tab.tabBtn = byClass('poe-tab-btn');
+
+    // 카드가 호박색으로 빛나고 있는가 = "지금 여기서 실제로 이동한다".
+    tab.cardGlowing = () =>
+        String(tab.overlay.style.boxShadow).includes('240, 160, 32');
     tab.value = (key) => byClass(`poe-v-${key}`);
 
     // body 가 생기고 DOMContentLoaded 가 발화한 시점.
@@ -243,6 +249,9 @@ function makeTab(name, store, clock, src = SRC, opts = {}) {
 
     tab.armedText = () => tab.btn.textContent;
     tab.clickToggle = () => tab.btn.onclick();
+
+    tab.tabText = () => tab.tabBtn.textContent;
+    tab.clickTabToggle = () => tab.tabBtn.onclick();
 
     // 특정 id 의 결과 행이 이미 렌더링돼 있는 것처럼 만든다.
     tab.addRow = (id) => {
@@ -669,6 +678,99 @@ function section(title) {
     U.clickToggle();
     check('무장 시 카드 테두리가 호박색',
           U.btn.style.boxShadow.includes('240, 160, 32'), true);
+
+    section('T19: 기본값 — 전체 OFF, 개별 사용');
+    const storeT = makeSharedStore();
+    const clockT = makeClock();
+
+    const T1 = makeTab('T1', storeT, clockT);
+    const T2 = makeTab('T2', storeT, clockT);
+
+    check('전체 기본 OFF', T1.armedText(), 'AUTO HO OFF');
+    check('개별 기본 사용', T1.tabText(), '이 탭 사용');
+
+    section('T20: 이 탭 정지는 이 탭만 멈추고 다른 탭은 계속 이동한다');
+    // 여러 탭에 다른 검색을 띄워두고 그중 하나만 재우는 게 목적이다.
+    // 이게 전체를 건드리면 나머지 탭까지 같이 죽는다.
+    T1.clickToggle();                      // 전체 ON (양쪽 탭)
+    check('T2 도 ON (전파됨)', T2.armedText(), 'AUTO HO ON');
+
+    const writesBeforeMute = storeT.writeCount();
+    T1.clickTabToggle();                   // T1 만 정지
+
+    check('T1 정지 표시', T1.tabText(), '이 탭 정지');
+    check('T1 의 전체 스위치는 그대로 ON', T1.armedText(), 'AUTO HO ON');
+    check('T2 는 영향 없음', T2.tabText(), '이 탭 사용');
+    check('저장소에 아무것도 쓰지 않는다',
+          storeT.writeCount() - writesBeforeMute, 0);
+
+    const idMuted = 'e1'.repeat(32);
+    T1.addRow(idMuted);
+    T2.addRow(idMuted);
+    T1.livePush(idMuted);
+    T2.livePush(idMuted);
+
+    const isoMuted = new Date().toISOString();
+    await T1.feed(idMuted, isoMuted);
+    await T2.feed(idMuted, isoMuted);
+    clockT.flush();
+
+    check('정지된 탭은 이동하지 않음', T1.clicks, []);
+    check('다른 탭은 정상 이동', T2.clicks, [idMuted]);
+
+    section('T21: 정지시키면 이미 예약된 이동도 취소된다');
+    // 예약만 걸어두고 안 끊으면, 방금 정지 눌렀는데 몇 초 뒤에 끌려간다.
+    const storeM = makeSharedStore();
+    const clockM = makeClock();
+
+    seedStore(storeM, LS_LAST_TELEPORT, String(Date.now() - 60_000));
+
+    const M = makeTab('M', storeM, clockM);
+    M.clickToggle();
+
+    const idPending = 'f1'.repeat(32);
+    M.addRow(idPending);
+    M.livePush(idPending);
+    await M.feed(idPending, new Date().toISOString());
+
+    check('클릭이 예약됨', clockM.pending() >= 1, true);
+
+    M.clickTabToggle();                    // 예약과 실행 사이에 정지
+    clockM.flush();
+
+    check('예약된 이동이 취소됨', M.clicks, []);
+
+    section('T22: 다시 사용으로 돌리면 그대로 이동한다');
+    // 정지가 탭을 영구히 망가뜨리면 안 된다.
+    M.clickTabToggle();
+    check('사용 상태로 복귀', M.tabText(), '이 탭 사용');
+    check('전체는 계속 ON', M.armedText(), 'AUTO HO ON');
+
+    const idResume = 'f2'.repeat(32);
+    M.addRow(idResume);
+    M.livePush(idResume);
+    await M.feed(idResume, new Date().toISOString());
+    clockM.flush();
+
+    check('복귀 후 정상 이동', M.clicks, [idResume]);
+
+    section('T23: 전체 ON + 이 탭 정지면 카드가 빛나지 않는다');
+    // 카드가 빛나는 건 "지금 여기서 실제로 이동한다" 는 뜻이어야 한다.
+    const storeV = makeSharedStore();
+    const clockV = makeClock();
+
+    const V = makeTab('V', storeV, clockV);
+
+    V.clickToggle();
+    check('무장하면 카드가 빛난다', V.cardGlowing(), true);
+
+    V.clickTabToggle();
+    check('이 탭을 정지하면 광채가 꺼진다', V.cardGlowing(), false);
+    check('전체 버튼은 켜진 채 흐려진다', V.btn.style.opacity, '0.4');
+    check('전체 상태 자체는 ON 유지', V.armedText(), 'AUTO HO ON');
+
+    V.clickTabToggle();
+    check('다시 사용하면 광채가 돌아온다', V.cardGlowing(), true);
 
     section('A 탭 로그 전문 (형식 눈으로 확인용)');
     for (const [lvl, m] of A.logs) console.log(`  [${lvl}] ${m}`);

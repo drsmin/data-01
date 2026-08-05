@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-011
+// @version      2026-08-05-012
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -238,17 +238,26 @@
      * UI 오버레이
      *
      * 거래소 위에 얹히는 패널이라 네 가지를 지킨다.
-     *   1. 자리를 거의 안 잡는다  — 기본은 작은 알약. 펼쳐야 카드가 된다
+     *   1. 손가락으로 눌린다      — 조작 3개를 전부 큰 버튼으로 세로로 쌓는다
      *   2. 비켜줄 수 있다        — 끌어서 원하는 자리로. 위치는 기억한다
-     *   3. 곁눈질로 읽힌다        — 무장 중이면 호박색, 접혀 있어도 색은 보인다
+     *   3. 곁눈질로 읽힌다        — 무장 중이면 호박색으로 빛난다
      *   4. 숫자가 안 흔들린다      — 시각은 tabular-nums 로 자리를 고정한다
      *
-     * 1·2 는 실제 불편에서 나왔다. 기본 자리(우하단)가 하필 결과 행의 은신처
-     * 버튼과 겹쳐서, 상태를 보여주는 물건이 정작 눌러야 할 버튼을 가렸다.
+     * 1 은 실제 사용 환경에서 나왔다. 이 도구는 휴대폰으로 PC 를 원격하면서
+     * 쓰인다. 화면이 축소돼 보이니 작은 표적은 조준 자체가 노동이다.
+     * 그래서 접었다 펴는 알약 하나로 시작하던 방식을 버렸다 — 가장 자주 하는
+     * 조작(끄고 켜기)이 가장 어려운 조작이 돼버렸다.
      *
-     * 구조: overlay(투명한 위치 잡이) > pill(접힘) | panel(펼침).
-     * 껍데기를 overlay 가 아니라 pill/panel 이 각각 갖는다. 그래야 접힘/펼침과
-     * 무장 광채가 서로 스타일을 덮어쓰며 싸우지 않는다.
+     * 지금은 3단이다. 세 버튼은 언제나 같은 자리에 있다.
+     *   모든 탭 사용 ON/OFF
+     *   이 탭 사용 ON/OFF
+     *   자세히 보기 / 접기      ← 아래 상세만 여닫는다. 버튼 자리는 안 움직인다
+     *
+     * 접기 버튼이 상세 위에 있는 게 핵심이다. 상세 안이나 아래에 두면 열 때마다
+     * 버튼이 움직여서, 접으려고 누른 곳에 다른 게 와 있다.
+     *
+     * 2 도 실제 불편에서 나왔다. 기본 자리(우하단)가 하필 결과 행의 은신처
+     * 버튼과 겹쳐서, 상태를 보여주는 물건이 정작 눌러야 할 버튼을 가렸다.
      *
      * 색은 어두운 유리판에 상태색 세 개(호박/초록/빨강)만 쓴다.
      * 클래스명은 테스트가 노드를 찾는 손잡이다 (생성 순서에 기대지 않게).
@@ -271,12 +280,13 @@
     const GLOW_BORDER = '1px solid rgba(240, 160, 32, 0.45)';
     const GLOW_SHADOW = CARD_SHADOW + ', 0 0 0 1px rgba(240, 160, 32, 0.18)';
 
-    // 접힘 여부와 위치. 탭을 새로 열어도 같은 자리에 있어야 하므로 저장한다.
-    const LS_UI = 'poeAutoHideout.ui';   // {c:접힘, r:right px, b:bottom px}
+    // 상세 접힘 여부와 위치. 탭을 새로 열어도 같은 자리에 있어야 하므로 저장한다.
+    const LS_UI = 'poeAutoHideout.ui';   // {c:상세 접힘, r:right px, b:bottom px}
 
     const UI_DEFAULT_POS = { right: 20, bottom: 80 };
 
-    let uiCollapsed = true;              // 기본은 접힘 — 가리지 않는 게 우선이다
+    // 상세는 기본 접힘. 버튼 3개는 항상 보인다 — 접히는 건 아래 표뿐이다.
+    let uiCollapsed = true;
     let uiPos = { right: UI_DEFAULT_POS.right, bottom: UI_DEFAULT_POS.bottom };
 
     function readUiPrefs() {
@@ -315,7 +325,7 @@
 
     readUiPrefs();
 
-    // overlay 는 위치만 잡는 투명한 껍데기다. 보이는 것은 pill 과 panel 이 갖는다.
+    // overlay 는 위치만 잡는 투명한 껍데기다. 보이는 것은 panel 이 갖는다.
     const overlay = document.createElement('div');
 
     overlay.className = 'poe-overlay';
@@ -330,31 +340,6 @@ line-height: 1.5;
 user-select: none;
 `;
 
-    // 접힘 상태. 이 크기면 결과 행 하나를 겨우 스치는 정도다.
-    const pill = document.createElement('button');
-
-    pill.className = 'poe-pill';
-
-    pill.style.cssText = `
-display: block;
-padding: 5px 10px;
-background: ${CARD_BG};
-backdrop-filter: blur(10px);
--webkit-backdrop-filter: blur(10px);
-border: ${CARD_BORDER};
-border-radius: 999px;
-box-shadow: ${CARD_SHADOW};
-font-family: inherit;
-font-size: 10px;
-font-weight: 700;
-letter-spacing: 0.4px;
-white-space: nowrap;
-cursor: pointer;
-opacity: 0.85;
-transition: opacity .15s ease, border-color .25s ease, box-shadow .25s ease;
-`;
-
-    // 펼침 상태.
     const panel = document.createElement('div');
 
     panel.className = 'poe-panel';
@@ -374,15 +359,8 @@ transition: opacity .15s ease, box-shadow .25s ease, border-color .25s ease;
 `;
 
     // 평소엔 한 발 물러나 있다가 볼 때만 또렷해진다.
-    overlay.onmouseenter = () => {
-        pill.style.opacity = '1';
-        panel.style.opacity = '1';
-    };
-
-    overlay.onmouseleave = () => {
-        pill.style.opacity = '0.85';
-        panel.style.opacity = '0.94';
-    };
+    overlay.onmouseenter = () => { panel.style.opacity = '1'; };
+    overlay.onmouseleave = () => { panel.style.opacity = '0.94'; };
 
     // 버튼 두 개가 무엇을 켜고 끄는지는 여기서 한 번만 말한다.
     // 버튼마다 "자동이동" 을 붙이면 두 번 읽히고 폭만 잡아먹는다.
@@ -390,7 +368,7 @@ transition: opacity .15s ease, box-shadow .25s ease, border-color .25s ease;
 
     caption.className = 'poe-caption';
 
-    caption.textContent = '자동 은신처 이동          접기 ─';
+    caption.textContent = '자동 은신처 이동';
 
     caption.style.cssText = `
 margin: 0 0 7px;
@@ -398,7 +376,6 @@ color: ${C.muted};
 font-size: 9.5px;
 font-weight: 600;
 letter-spacing: 0.6px;
-cursor: pointer;
 `;
 
     const hideoutBtn = document.createElement('button');
@@ -407,14 +384,15 @@ cursor: pointer;
 
     hideoutBtn.textContent = '모든 탭 사용 OFF';
 
+    // 원격 화면에서 손가락으로 누른다. 표적이 작으면 조준이 노동이 된다.
     hideoutBtn.style.cssText = `
 display: block;
 box-sizing: border-box;
 width: 100%;
 margin: 0 0 6px;
-padding: 8px 10px;
+padding: 11px 12px;
 font-family: inherit;
-font-size: 11px;
+font-size: 12px;
 font-weight: 700;
 letter-spacing: 0.8px;
 cursor: pointer;
@@ -423,8 +401,8 @@ border-radius: 8px;
 transition: background .15s ease, color .15s ease, box-shadow .15s ease;
 `;
 
-    // 이 탭만 재우는 스위치. 전체 스위치보다 한 급 작고 조용하게 — 주된 조작은
-    // 전체 쪽이고, 이건 예외 상황에만 건드리는 물건이다.
+    // 이 탭만 재우는 스위치. 상위 스위치보다 조용하게(테두리만) 두되 크기는
+    // 줄이지 않는다 — 조용한 것과 누르기 어려운 것은 다른 얘기다.
     const tabBtn = document.createElement('button');
 
     tabBtn.className = 'poe-tab-btn';
@@ -435,17 +413,46 @@ transition: background .15s ease, color .15s ease, box-shadow .15s ease;
 display: block;
 box-sizing: border-box;
 width: 100%;
-margin: 0 0 10px;
-padding: 5px 8px;
+margin: 0 0 6px;
+padding: 10px 12px;
 font-family: inherit;
-font-size: 10px;
+font-size: 11.5px;
+font-weight: 700;
+letter-spacing: 0.4px;
+cursor: pointer;
+background: transparent;
+border-radius: 8px;
+transition: background .15s ease, color .15s ease, border-color .15s ease;
+`;
+
+    // 3단째. 아래 상세만 여닫는다. 이 버튼 자체는 상세 위에 고정이라
+    // 열든 접든 자리가 안 움직인다 — 접으려고 누른 곳에 다른 게 오면 안 된다.
+    const detailBtn = document.createElement('button');
+
+    detailBtn.className = 'poe-detail-btn';
+
+    detailBtn.style.cssText = `
+display: block;
+box-sizing: border-box;
+width: 100%;
+margin: 0;
+padding: 9px 12px;
+font-family: inherit;
+font-size: 10.5px;
 font-weight: 600;
 letter-spacing: 0.4px;
 cursor: pointer;
 background: transparent;
-border-radius: 6px;
-transition: background .15s ease, color .15s ease, border-color .15s ease;
+border-radius: 8px;
+transition: color .15s ease, border-color .15s ease;
 `;
+
+    // 상세는 이 안에 모아 한 번에 여닫는다.
+    const details = document.createElement('div');
+
+    details.className = 'poe-details';
+
+    details.style.cssText = 'margin-top: 10px;';
 
     const grid = document.createElement('div');
 
@@ -504,7 +511,7 @@ text-overflow: ellipsis;
     footer.textContent = `v${version}`;
 
     footer.style.cssText = `
-margin-top: 10px;
+margin-top: 8px;
 padding-top: 7px;
 border-top: 1px solid rgba(255, 255, 255, 0.07);
 color: ${C.faint};
@@ -513,13 +520,15 @@ letter-spacing: 0.3px;
 text-align: right;
 `;
 
+    details.appendChild(grid);
+    details.appendChild(footer);
+
     panel.appendChild(caption);
     panel.appendChild(hideoutBtn);
     panel.appendChild(tabBtn);
-    panel.appendChild(grid);
-    panel.appendChild(footer);
+    panel.appendChild(detailBtn);
+    panel.appendChild(details);
 
-    overlay.appendChild(pill);
     overlay.appendChild(panel);
 
     // 오버레이가 못 붙어도 알림/텔레포트는 계속 동작해야 한다.
@@ -573,19 +582,11 @@ text-align: right;
 
     };
 
-    pill.onclick = () => {
+    detailBtn.onclick = () => {
 
         if (swallowClickAfterDrag()) return;
 
-        setCollapsed(false);
-
-    };
-
-    caption.onclick = () => {
-
-        if (swallowClickAfterDrag()) return;
-
-        setCollapsed(true);
+        setCollapsed(!uiCollapsed);
 
     };
 
@@ -600,8 +601,30 @@ text-align: right;
 
     function renderCollapsed() {
 
-        pill.style.display = uiCollapsed ? 'block' : 'none';
-        panel.style.display = uiCollapsed ? 'none' : 'block';
+        details.style.display = uiCollapsed ? 'none' : 'block';
+
+        renderDetailBtn();
+
+    }
+
+    // 상세를 접어두면 소켓 상태가 안 보인다. 그런데 "켜뒀는데 소켓이 없다" 는
+    // 켜진 줄 알고 자리를 비우게 만드는 상태라 접힌 채로도 드러나야 한다.
+    function renderDetailBtn() {
+
+        const blind = REQUIRE_LIVE_PUSH && hideoutActive() && liveSocketCount === 0;
+
+        detailBtn.textContent = (uiCollapsed ? '자세히 보기  ▾' : '접기  ▴')
+            + (blind ? '   · 소켓 없음' : '');
+
+        detailBtn.style.color = blind ? C.red : C.muted;
+
+        detailBtn.style.border = blind
+            ? '1px solid rgba(248, 81, 73, 0.45)'
+            : CARD_BORDER;
+
+        detailBtn.style.background = blind
+            ? 'rgba(248, 81, 73, 0.08)'
+            : 'transparent';
 
     }
 
@@ -769,7 +792,7 @@ text-align: right;
         panel.style.border = active ? GLOW_BORDER : CARD_BORDER;
         panel.style.boxShadow = active ? GLOW_SHADOW : CARD_SHADOW;
 
-        renderPill();
+        renderDetailBtn();
 
     }
 
@@ -826,42 +849,6 @@ text-align: right;
     // 서버 헬스체크 콜백이 'Notified' 를 즉시 덮어쓰지 않도록 마지막 상태를 기억한다.
     let statusText = 'Running';
 
-    // 접힌 알약 하나로 상태를 말한다. 펼치지 않아도 지금 위험한지 알아야 한다.
-    //   이동 ON   — 지금 이 탭에서 실제로 끌려갈 수 있다 (호박)
-    //   이 탭 OFF — 모든 탭은 켜져 있지만 여기만 빠져 있다 (빨강)
-    //   소켓 없음 — 켜뒀는데 라이브 신호가 없다. 켜진 줄 알면 낭패다 (빨강)
-    //   이동 OFF  — 꺼져 있다 (회색)
-    function renderPill() {
-
-        if (hideoutActive()) {
-
-            if (REQUIRE_LIVE_PUSH && liveSocketCount === 0) {
-
-                pill.textContent = '● 소켓 없음';
-                pill.style.color = C.red;
-                pill.style.border = '1px solid rgba(248, 81, 73, 0.45)';
-
-            } else {
-
-                pill.textContent = '● 이동 ON';
-                pill.style.color = C.amber;
-                pill.style.border = GLOW_BORDER;
-
-            }
-
-            pill.style.boxShadow = GLOW_SHADOW;
-
-            return;
-
-        }
-
-        pill.textContent = autoHideoutArmed ? '● 이 탭 OFF' : '● 이동 OFF';
-        pill.style.color = autoHideoutArmed ? C.red : C.muted;
-        pill.style.border = CARD_BORDER;
-        pill.style.boxShadow = CARD_SHADOW;
-
-    }
-
     // 값 + 색을 함께 쓴다. 색만으로 뜻을 전하지 않도록 글자도 항상 같이 바꾼다.
     function setValue(node, text, color) {
 
@@ -899,8 +886,8 @@ text-align: right;
         setValue(vAlert, fmt(lastAlert), lastAlert ? C.text : C.faint);
         setValue(vTeleport, fmt(lastTeleport), lastTeleport ? C.text : C.faint);
 
-        // 소켓이 죽고 사는 건 알약에도 나타나야 한다 — 접어둔 채로 쓰는 게 기본이라.
-        renderPill();
+        // 소켓이 죽고 사는 건 접기 버튼에도 나타나야 한다 (상세를 접어둘 수 있으므로).
+        renderDetailBtn();
 
     }
 

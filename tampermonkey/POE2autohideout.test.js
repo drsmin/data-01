@@ -239,18 +239,21 @@ function makeTab(name, store, clock, src = SRC, opts = {}) {
     const byClass = (c) => created.find((e) => e.className === c);
 
     tab.overlay = byClass('poe-overlay');
-    tab.pill = byClass('poe-pill');
     tab.panel = byClass('poe-panel');
     tab.caption = byClass('poe-caption');
     tab.btn = byClass('poe-ho-btn');
     tab.tabBtn = byClass('poe-tab-btn');
+    tab.detailBtn = byClass('poe-detail-btn');
+    tab.details = byClass('poe-details');
 
     // 카드가 호박색으로 빛나고 있는가 = "지금 여기서 실제로 이동한다".
     tab.cardGlowing = () =>
         String(tab.panel.style.boxShadow).includes('240, 160, 32');
 
-    tab.isCollapsed = () => tab.panel.style.display === 'none';
-    tab.pillText = () => tab.pill.textContent;
+    // 상세만 접힌다. 버튼 3개는 언제나 보인다.
+    tab.isCollapsed = () => tab.details.style.display === 'none';
+    tab.detailText = () => tab.detailBtn.textContent;
+    tab.clickDetail = () => tab.detailBtn.onclick();
 
     // 마우스로 끌기. document 리스너를 그대로 태운다.
     tab.dragBy = (dx, dy) => {
@@ -975,33 +978,48 @@ function section(title) {
     check('토큰 경고를 남기지 않는다 (토큰 모양이 아니므로)',
           X.logs.some(([lvl]) => lvl === 'warn'), false);
 
-    section('T31: 기본은 접힘 — 화면을 거의 가리지 않는다');
-    // 기본 자리(우하단)가 하필 결과 행의 은신처 버튼과 겹친다.
-    // 상태를 보여주는 물건이 정작 눌러야 할 버튼을 가리면 안 된다.
+    section('T31: 조작 3개는 언제나 보인다 (상세만 접힌다)');
+    // 휴대폰으로 PC 를 원격하며 쓴다. 화면이 축소돼 보이니 작은 표적을 조준하는
+    // 것 자체가 노동이다. 가장 자주 하는 조작이 가장 어려우면 안 된다.
     const storeO = makeSharedStore();
     const clockO = makeClock();
 
     const O = makeTab('O', storeO, clockO);
 
-    check('접힌 채로 시작', O.isCollapsed(), true);
-    check('알약이 상태를 말한다', O.pillText(), '● 이동 OFF');
+    check('세 버튼이 모두 있다',
+          [!!O.btn, !!O.tabBtn, !!O.detailBtn], [true, true, true]);
+    check('버튼은 숨지 않는다',
+          [O.btn.style.display, O.tabBtn.style.display, O.detailBtn.style.display]
+              .every((d) => d !== 'none'), true);
+    check('상세는 접힌 채로 시작', O.isCollapsed(), true);
+    check('접기 버튼이 여는 쪽을 가리킨다',
+          O.detailText().includes('자세히 보기'), true);
 
-    O.pill.onclick();
-    check('알약을 누르면 펼쳐진다', O.isCollapsed(), false);
+    O.clickDetail();
+    check('누르면 상세가 열린다', O.isCollapsed(), false);
+    check('같은 버튼이 접는 쪽으로 바뀐다',
+          O.detailText().includes('접기'), true);
 
-    O.caption.onclick();
-    check('캡션을 누르면 접힌다', O.isCollapsed(), true);
+    O.clickDetail();
+    check('다시 누르면 접힌다', O.isCollapsed(), true);
 
-    section('T32: 접힌 알약만 봐도 위험한지 알 수 있다');
-    // 접어두고 쓰는 게 기본이므로, 펼치지 않고도 지금 끌려갈 수 있는지 보여야 한다.
+    section('T32: 상세를 접어둬도 "켜뒀는데 소켓 없음" 은 드러난다');
+    // 켜진 줄 알고 자리를 비우게 만드는 상태라 접힌 채로도 보여야 한다.
+    check('꺼져 있을 땐 경고하지 않는다',
+          O.detailText().includes('소켓 없음'), false);
+
     O.clickToggle();                       // 모든 탭 ON (소켓은 없음)
-    check('켰는데 소켓이 없으면 경고', O.pillText(), '● 소켓 없음');
+    check('켜면 접기 버튼에 경고가 붙는다',
+          O.detailText().includes('소켓 없음'), true);
+    check('경고색', O.detailBtn.style.color, '#f85149');
 
     O.livePushToken('aaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbb.cccccccccccccccc');
-    check('소켓이 살아 있으면 이동 ON', O.pillText(), '● 이동 ON');
+    check('소켓이 살아나면 경고가 사라진다',
+          O.detailText().includes('소켓 없음'), false);
 
-    O.clickTabToggle();                    // 이 탭만 정지
-    check('이 탭만 빠지면 그렇게 말한다', O.pillText(), '● 이 탭 OFF');
+    O.clickTabToggle();                    // 이 탭만 정지 → 이 탭은 안 움직인다
+    check('이 탭이 빠져 있으면 소켓 경고도 무의미하다',
+          O.detailText().includes('소켓 없음'), false);
 
     section('T33: 끌어서 옮기면 위치를 기억한다');
     // 어느 자리가 안전한지는 사이트 레이아웃과 창 크기에 달렸다. 사람이 고른다.
@@ -1030,7 +1048,7 @@ function section(title) {
     const clockDg = makeClock();
 
     const Dg2 = makeTab('Dg2', storeDg, clockDg);
-    Dg2.pill.onclick();                    // 펼쳐두고
+    Dg2.clickDetail();                     // 상세를 펼쳐두고
 
     const armedBefore = Dg2.armedText();
 

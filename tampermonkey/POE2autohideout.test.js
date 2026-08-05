@@ -372,28 +372,28 @@ function section(title) {
     check('B OFF', B.armedText(), '모든 탭 OFF');
     check('A OFF (전파됨)', A.armedText(), '모든 탭 OFF');
 
-    section('T3: 무장 중 새 탭을 열면 상태를 이어받고, 기존 탭을 끄지 않는다');
+    section('T3: 켜둔 채로 새 탭을 열면 상태를 이어받고, 기존 탭을 끄지 않는다');
     A.clickToggle();                       // 다시 ON
     const C = makeTab('C', store, clock);
     check('C 가 ON 으로 시작', C.armedText(), '모든 탭 ON');
     check('A 는 여전히 ON', A.armedText(), '모든 탭 ON');
     check('B 는 여전히 ON', B.armedText(), '모든 탭 ON');
 
-    section('T4: A 가 이동하면 전체가 해제되고 쿨다운이 공유된다');
+    section('T4: A 가 이동하면 모든 탭이 꺼지고 쿨다운이 공유된다');
     const id1 = 'a'.repeat(64);
     A.addRow(id1);
     A.livePush(id1);
     await A.feed(id1, new Date().toISOString());
     clock.flush();                         // 예약된 클릭 실행
     check('A 가 클릭 1회', A.clicks, [id1]);
-    check('A OFF (자동 해제)', A.armedText(), '모든 탭 OFF');
+    check('A OFF (자동으로 꺼짐)', A.armedText(), '모든 탭 OFF');
     check('B OFF (전파됨)', B.armedText(), '모든 탭 OFF');
     check('C OFF (전파됨)', C.armedText(), '모든 탭 OFF');
     check('저장소에 lastTeleport 기록',
           typeof store.dump()[LS_LAST_TELEPORT], 'string');
 
     section('T5: 쿨다운 중 다른 탭은 이동하지 않는다');
-    B.clickToggle();                       // 전체 재무장
+    B.clickToggle();                       // 모든 탭 다시 켜기
     check('B ON', B.armedText(), '모든 탭 ON');
     const id2 = 'b'.repeat(64);
     B.addRow(id2);
@@ -416,7 +416,7 @@ function section(title) {
           store.writeCount() - writesBefore, 1);
 
     section('T7: 두 탭이 같은 매물을 동시에 잡아도 클릭은 1회 (자동 해제 모드)');
-    // 실제로 가장 위험한 경합. 두 탭 모두 무장 상태에서 같은 응답을 받으면
+    // 실제로 가장 위험한 경합. 두 탭 모두 켜진 상태에서 같은 응답을 받으면
     // 둘 다 canTriggerHideout 을 통과한 뒤 각자 랜덤 딜레이로 클릭을 예약한다.
     const store2 = makeSharedStore();
     const clock2 = makeClock();
@@ -447,16 +447,16 @@ function section(title) {
 
     check('전체 클릭 합계 = 1', D.clicks.length + E.clicks.length, 1);
 
-    // 이 모드에서 억제되는 경로: 먼저 이동한 탭이 무장 해제를 브로드캐스트하고,
+    // 이 모드에서 억제되는 경로: 먼저 이동한 탭이 "꺼짐" 을 브로드캐스트하고,
     // 늦은 탭은 applyAutoHideout → cancelHideout 으로 예약이 취소된다.
     // (클릭 직전 쿨다운 재확인까지 갈 필요가 없다.)
-    check('늦은 탭은 무장 해제 전파로 예약이 취소됨',
+    check('늦은 탭은 꺼짐 전파로 예약이 취소됨',
           [...D.logs, ...E.logs].some(([, m]) =>
               m.includes('모든 탭 자동이동 OFF') && m.includes('다른 탭에서 변경')),
           true);
 
     section('T8: 연속 이동 모드(DISARM_AFTER_TELEPORT=false)에서도 클릭은 1회');
-    // 무장 해제가 없으므로 이번엔 클릭 직전 쿨다운 재확인이 유일한 방어선이다.
+    // 자동으로 꺼지지 않으므로 이번엔 클릭 직전 쿨다운 재확인이 유일한 방어선이다.
     const SRC_NO_DISARM = SRC.replace(
         'const DISARM_AFTER_TELEPORT = true;',
         'const DISARM_AFTER_TELEPORT = false;');
@@ -489,7 +489,7 @@ function section(title) {
     clock3.flush();
 
     check('전체 클릭 합계 = 1', G.clicks.length + H.clicks.length, 1);
-    check('둘 다 여전히 무장 상태',
+    check('둘 다 여전히 켜진 상태',
           [G.armedText(), H.armedText()], ['모든 탭 ON', '모든 탭 ON']);
     check('늦은 탭에 click 취소(쿨다운 재확인) 로그 있음',
           [...G.logs, ...H.logs].some(([, m]) =>
@@ -540,7 +540,7 @@ function section(title) {
           P2.logs.some(([, m]) => m.includes('[POE][POE1]')), false);
 
     section('T11: 라이브 푸시가 없으면 이동하지 않는다 (수동 검색 시나리오)');
-    // 원래 버그. 라이브가 꺼진 탭에서 손으로 검색해도 무장 상태는 탭 간 공유라
+    // 원래 버그. 라이브가 꺼진 탭에서 손으로 검색해도 스위치는 탭 간 공유라
     // 그대로 발동했다. 이제는 소켓이 알려준 id 가 아니면 이동하지 않는다.
     const storeS = makeSharedStore();
     const clockS = makeClock();
@@ -557,7 +557,7 @@ function section(title) {
     clockS.flush();
 
     check('라이브 확인 없으면 클릭하지 않음', S.clicks, []);
-    check('무장 상태 유지 (해제되지 않음)', S.armedText(), '모든 탭 ON');
+    check('스위치 유지 (꺼지지 않음)', S.armedText(), '모든 탭 ON');
     check('소켓을 못 봤다는 이유가 남는다',
           S.logs.some(([, m]) =>
               m.includes('skip: 라이브 소켓을 하나도 못 봤다')), true);
@@ -573,7 +573,7 @@ function section(title) {
     clockS.flush();
 
     check('라이브 푸시는 클릭됨', S.clicks, [idLive]);
-    check('이동 후 자동 해제', S.armedText(), '모든 탭 OFF');
+    check('이동 후 자동으로 꺼짐', S.armedText(), '모든 탭 OFF');
     check('푸시 수신 로그 있음',
           S.logs.some(([, m]) => m.includes('[POE][LIVE] 푸시 1건')), true);
 
@@ -581,7 +581,7 @@ function section(title) {
     // 소켓이 살아 있는 탭에서 손으로 검색한 경우. "소켓을 못 봤다" 와는
     // 대처가 다르므로 로그가 달라야 한다.
     const idOther = '7'.repeat(64);
-    S.clickToggle();                       // 재무장
+    S.clickToggle();                       // 다시 켜기
     S.addRow(idOther);
     await S.feed(idOther, new Date().toISOString());
     clockS.flush();
@@ -707,9 +707,9 @@ function section(title) {
     check('소켓을 잡으면 초록', U.value('live').style.color, '#4ac25e');
     check('소켓/푸시 개수 표시', U.value('live').textContent, '● 1 / 푸시 1');
 
-    // 무장하면 버튼뿐 아니라 카드 전체가 물든다 (곁눈질로 보이도록).
+    // 작동 중이면 버튼뿐 아니라 카드 전체가 물든다 (곁눈질로 보이도록).
     U.clickToggle();
-    check('무장 시 카드 테두리가 호박색',
+    check('작동 중엔 카드 테두리가 호박색',
           U.btn.style.boxShadow.includes('240, 160, 32'), true);
 
     section('T19: 기본값 — 전체 OFF, 개별 사용');
@@ -795,7 +795,7 @@ function section(title) {
     const V = makeTab('V', storeV, clockV);
 
     V.clickToggle();
-    check('무장하면 카드가 빛난다', V.cardGlowing(), true);
+    check('작동 중이면 카드가 빛난다', V.cardGlowing(), true);
 
     V.clickTabToggle();
     check('이 탭을 끄면 광채가 꺼진다', V.cardGlowing(), false);
@@ -1064,6 +1064,36 @@ function section(title) {
         Dg2.dragBy(1, 1);
         return Dg2.overlay.style.right;
     })(), '60px');
+
+    section('T35: 작동 중이면 카드 바탕까지 호박빛으로 물든다');
+    // 테두리만 물들이면 화면 구석에서는 선 한 줄이라 놓친다. 면이 물들어야
+    // 눈길이 안 가 있어도 "저거 켜져 있다" 가 읽힌다.
+    const storeTn = makeSharedStore();
+    const clockTn = makeClock();
+
+    const Tn = makeTab('Tn', storeTn, clockTn);
+
+    check('꺼져 있으면 차가운 회청색', Tn.panel.style.background,
+          'rgba(38, 44, 56, 0.97)');
+
+    Tn.clickToggle();
+    check('작동 중이면 호박빛 바탕', Tn.panel.style.background,
+          'rgba(58, 47, 34, 0.97)');
+    check('그 위의 홈도 같이 따뜻해진다', Tn.tabBtn.style.background, '#241c11');
+
+    // 소켓이 없으면 접기 버튼은 경고(빨강)가 우선이다 — 색이 겹치면 경고가 이긴다.
+    check('소켓 없을 땐 경고색이 이긴다', Tn.detailBtn.style.background,
+          'rgba(255, 107, 96, 0.14)');
+
+    Tn.livePushToken('aaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbb.cccccccccccccccc');
+    check('소켓이 살면 접기 버튼도 따뜻해진다',
+          Tn.detailBtn.style.background, '#241c11');
+
+    // 모든 탭만 켜지고 이 탭이 빠지면 여기선 안 움직인다 → 물들면 안 된다.
+    Tn.clickTabToggle();
+    check('이 탭이 빠지면 바탕이 돌아온다', Tn.panel.style.background,
+          'rgba(38, 44, 56, 0.97)');
+    check('홈도 차가운 쪽으로', Tn.detailBtn.style.background, '#13161d');
 
     section('A 탭 로그 전문 (형식 눈으로 확인용)');
     for (const [lvl, m] of A.logs) console.log(`  [${lvl}] ${m}`);

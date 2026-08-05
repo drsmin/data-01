@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-013
+// @version      2026-08-05-014
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -27,7 +27,7 @@
 
     // 자동 이동 스위치는 둘이다. 실효 상태는 두 개가 모두 켜졌을 때뿐이다.
     //
-    //   autoHideoutArmed — 전체 무장. 탭 간 공유되고 localStorage 에 남는다.
+    //   autoHideoutArmed — 모든 탭 스위치. 탭 간 공유되고 localStorage 에 남는다.
     //                      기본값 OFF.
     //   tabEnabled       — 이 탭만 임시로 빼두는 스위치. 공유하지 않고 저장도
     //                      하지 않는다. 기본값 사용(ON), 새로고침하면 되돌아온다.
@@ -37,7 +37,15 @@
     let autoHideoutArmed = false;
     let tabEnabled = true;
 
-    // 이동을 막는 건 자동 이동뿐이다. 알림은 어느 쪽을 꺼도 그대로 나간다.
+    // 홈(파인 면)의 색. 카드 바탕이 무엇이냐에 따라 같이 움직인다.
+    function wellBg() {
+
+        return hideoutActive() ? WELL_BG_ON : WELL_BG;
+
+    }
+
+    // "작동 중" = 지금 이 화면에서 실제로 은신처로 끌려갈 수 있는 상태.
+    // 막는 건 자동 이동뿐이다. 알림은 어느 쪽을 꺼도 그대로 나간다.
     function hideoutActive() {
 
         return autoHideoutArmed && tabEnabled;
@@ -77,9 +85,9 @@
     // hideout 버튼을 이 시간까지 못 찾으면 관찰을 포기한다.
     const HIDEOUT_WAIT_TIMEOUT_MS = 15_000;
 
-    // 이동 1회 성공 후 자동으로 무장을 해제한다.
-    // 쿨다운(COOLDOWN_MS)은 간격만 벌리므로, 무장을 켜 둔 채 자리를 비우면
-    // 매물이 뜰 때마다 계속 이동한다. 무장 해제가 그걸 끊는 유일한 정지점이다.
+    // 이동 1회 성공 후 모든 탭 스위치를 자동으로 끈다.
+    // 쿨다운(COOLDOWN_MS)은 간격만 벌리므로, 켜 둔 채 자리를 비우면 매물이 뜰
+    // 때마다 계속 이동한다. 자동으로 꺼지는 것이 그걸 끊는 유일한 정지점이다.
     // 연속 이동을 원하면 false 로 두고 쿨다운에만 의존한다.
     const DISARM_AFTER_TELEPORT = true;
 
@@ -201,7 +209,7 @@
 
     }
 
-    // 공유된 무장 상태. 키가 없으면(첫 탭) null 을 준다.
+    // 공유된 모든 탭 스위치 상태. 키가 없으면(첫 탭) null 을 준다.
     // false 와 null 을 구분해야 새 탭이 기존 상태를 덮어쓰지 않는다.
     function readSharedArmed() {
 
@@ -240,7 +248,7 @@
      * 거래소 위에 얹히는 패널이라 네 가지를 지킨다.
      *   1. 손가락으로 눌린다      — 조작 3개를 전부 큰 버튼으로 세로로 쌓는다
      *   2. 비켜줄 수 있다        — 끌어서 원하는 자리로. 위치는 기억한다
-     *   3. 곁눈질로 읽힌다        — 무장 중이면 호박색으로 빛난다
+     *   3. 곁눈질로 읽힌다        — 작동 중이면 카드가 호박빛으로 물든다
      *   4. 숫자가 안 흔들린다      — 시각은 tabular-nums 로 자리를 고정한다
      *
      * 1 은 실제 사용 환경에서 나왔다. 이 도구는 휴대폰으로 PC 를 원격하면서
@@ -278,8 +286,17 @@
         + ' "Helvetica Neue", Arial, sans-serif';
 
     const CARD_BG = 'rgba(38, 44, 56, 0.97)';          // 배경보다 밝다
+
+    // 작동 중일 때의 카드 바탕. 같은 밝기에서 색만 호박 쪽으로 민다.
+    // 테두리만 물들이면 화면 구석에서는 선 한 줄이라 놓친다. 면이 물들어야
+    // 눈길이 안 가 있어도 "저거 켜져 있다" 가 읽힌다.
+    const CARD_BG_ON = 'rgba(58, 47, 34, 0.97)';
     const CARD_BORDER = '1px solid rgba(255, 255, 255, 0.22)';
     const WELL_BG = '#13161d';                          // 카드보다 어두운 홈
+
+    // 바탕이 호박빛으로 물들면 그 위의 홈도 같이 따뜻해져야 한다.
+    // 차가운 회색 홈만 남으면 덧댄 것처럼 뜬다.
+    const WELL_BG_ON = '#241c11';
     const WELL_BORDER = '1px solid rgba(255, 255, 255, 0.14)';
 
     // 검정 위에서는 그림자가 안 보인다. 바깥으로 밝은 테를 한 겹 둘러
@@ -649,7 +666,7 @@ text-align: right;
 
         detailBtn.style.background = blind
             ? 'rgba(255, 107, 96, 0.14)'
-            : WELL_BG;
+            : wellBg();
 
     }
 
@@ -785,7 +802,7 @@ text-align: right;
 
         } else {
 
-            hideoutBtn.style.background = WELL_BG;
+            hideoutBtn.style.background = wellBg();
             hideoutBtn.style.color = C.muted;
             hideoutBtn.style.boxShadow = 'inset 0 0 0 1px rgba(255, 255, 255, 0.14)';
 
@@ -797,7 +814,7 @@ text-align: right;
 
             tabBtn.style.border = WELL_BORDER;
             tabBtn.style.color = C.text;
-            tabBtn.style.background = WELL_BG;
+            tabBtn.style.background = wellBg();
 
         } else {
 
@@ -812,7 +829,8 @@ text-align: right;
         tabBtn.style.opacity = autoHideoutArmed ? '1' : '0.4';
 
         // 카드가 빛나는 건 "지금 여기서 실제로 이동한다" 는 뜻이어야 한다.
-        // 전체만 켜진 상태에서 빛나면 재워둔 탭이 무장한 것처럼 보인다.
+        // 모든 탭만 켜진 상태에서 빛나면 재워둔 탭이 작동 중인 것처럼 보인다.
+        panel.style.background = active ? CARD_BG_ON : CARD_BG;
         panel.style.border = active ? GLOW_BORDER : CARD_BORDER;
         panel.style.boxShadow = active ? GLOW_SHADOW : CARD_SHADOW;
 
@@ -1558,7 +1576,7 @@ text-align: right;
      *
      * 즉 /fetch 응답만 봐서는 둘을 구분할 수 없다. 구분하지 않으면,
      * 라이브가 꺼진 탭에서 손으로 검색만 해도 60초 이내 매물이 하나라도 있으면
-     * 자동으로 은신처로 날아간다 (무장 상태는 탭 간 공유라 어느 탭이든 발동한다).
+     * 자동으로 은신처로 날아간다 (스위치는 탭 간 공유라 어느 탭이든 발동한다).
      *
      * 그래서 /search 가 돌려준 id 를 기억해 두고, 그 id 로 들어온 매물은
      * 자동 이동 대상에서 뺀다. /search 응답은 항상 /fetch 보다 먼저 도착한다
@@ -2123,8 +2141,8 @@ text-align: right;
                  * AUTO HIDEOUT
                  **********************/
                 // 억제는 4단계다:
-                //   실효 무장(전체 ∧ 이 탭) → 라이브 푸시 확인 → hideoutPending → 쿨다운
-                // 이동에 성공하면 simulateHumanClick 이 무장을 해제하므로 여기서 끊긴다.
+                //   작동 중(모든 탭 ∧ 이 탭) → 라이브 푸시 확인 → hideoutPending → 쿨다운
+                // 이동에 성공하면 simulateHumanClick 이 스위치를 꺼서 여기서 끊긴다.
                 if (hideoutActive()) {
 
                     if (REQUIRE_LIVE_PUSH && !fromLive.has(id)) {
@@ -2337,7 +2355,7 @@ text-align: right;
 
         checkServerAliveOnce();
 
-        // 다른 탭이 이미 무장돼 있으면 그 상태를 따라간다.
+        // 다른 탭이 이미 켜져 있으면 그 상태를 따라간다.
         // 무조건 OFF 로 쓰면 새 탭을 열 때마다 전체가 꺼진다.
         const sharedArmed = readSharedArmed();
 

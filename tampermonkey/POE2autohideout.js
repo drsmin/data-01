@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-014
+// @version      2026-08-05-015
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -285,6 +285,11 @@
     const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,'
         + ' "Helvetica Neue", Arial, sans-serif';
 
+    const PANEL_W = 216;
+
+    // 접혔을 때의 대략 높이. offsetHeight 를 못 읽는 경우의 보수적 하한이다.
+    const PANEL_H = 120;
+
     const CARD_BG = 'rgba(38, 44, 56, 0.97)';          // 배경보다 밝다
 
     // 작동 중일 때의 카드 바탕. 같은 밝기에서 색만 호박 쪽으로 민다.
@@ -375,7 +380,7 @@ user-select: none;
 
     panel.style.cssText = `
 box-sizing: border-box;
-width: 216px;
+width: ${PANEL_W}px;
 padding: 10px;
 background: ${CARD_BG};
 backdrop-filter: blur(10px);
@@ -670,10 +675,35 @@ text-align: right;
 
     }
 
+    // 지금 창 안에 완전히 들어오도록 가둔 좌표.
+    //
+    // right/bottom 기준이라 왼쪽에 놓을수록 right 가 커진다. 창이 좁아지면
+    // (개발자 도구를 열면) 그 큰 값이 그대로 남아 패널이 왼쪽 밖으로 밀려나
+    // 사라졌다. 예전에 우하단 고정일 때 문제가 없었던 건 right 가 늘 20 이라
+    // 어떤 창 크기에서도 화면 안이었기 때문이다.
+    function clampPos(pos) {
+
+        const { w, h } = viewport();
+
+        const pw = (panel && panel.offsetWidth) || PANEL_W;
+        const ph = (panel && panel.offsetHeight) || PANEL_H;
+
+        return {
+            right: clamp(pos.right, 0, Math.max(0, w - pw)),
+            bottom: clamp(pos.bottom, 0, Math.max(0, h - ph))
+        };
+
+    }
+
+    // 저장된 uiPos 는 "사용자가 원한 자리" 이고, 여기서 가두는 건 그리기용이다.
+    // uiPos 자체를 고치지 않는 게 중요하다 — 개발자 도구를 닫아 창이 돌아오면
+    // 원래 자리로 복귀해야지, 좁았을 때 밀린 자리에 눌러앉으면 안 된다.
     function applyUiPos() {
 
-        overlay.style.right = `${Math.round(uiPos.right)}px`;
-        overlay.style.bottom = `${Math.round(uiPos.bottom)}px`;
+        const at = clampPos(uiPos);
+
+        overlay.style.right = `${Math.round(at.right)}px`;
+        overlay.style.bottom = `${Math.round(at.bottom)}px`;
 
     }
 
@@ -708,7 +738,6 @@ text-align: right;
 
     }
 
-    // 창 밖으로 끌고 나가 다시 못 잡는 일이 없게 가둔다.
     function viewport() {
 
         const w = (typeof window !== 'undefined' && window.innerWidth) || 1920;
@@ -744,11 +773,11 @@ text-align: right;
 
         dragState.moved = true;
 
-        const { w, h } = viewport();
-
         // right/bottom 기준이라 마우스와 부호가 반대다.
-        uiPos.right = clamp(dragState.right - dx, 0, Math.max(0, w - 40));
-        uiPos.bottom = clamp(dragState.bottom - dy, 0, Math.max(0, h - 30));
+        uiPos = clampPos({
+            right: dragState.right - dx,
+            bottom: dragState.bottom - dy
+        });
 
         applyUiPos();
 
@@ -776,6 +805,14 @@ text-align: right;
 
     document.addEventListener('mousemove', onDragMove);
     document.addEventListener('mouseup', onDragEnd);
+
+    // 창 크기가 바뀌면 다시 가둔다. 개발자 도구를 열거나 창을 줄이면 저장된
+    // 자리가 화면 밖이 될 수 있고, 그러면 다시 잡을 방법이 없다.
+    if (window && window.addEventListener) {
+
+        window.addEventListener('resize', applyUiPos);
+
+    }
 
     // 두 스위치의 조합을 한 곳에서 그린다. 각자 자기 버튼만 고치게 두면
     // "모든 탭 ON + 이 탭 OFF" 같은 조합에서 화면이 거짓말을 하게 된다.

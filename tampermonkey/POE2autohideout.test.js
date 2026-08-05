@@ -124,6 +124,8 @@ function makeTab(name, store, clock, src = SRC, opts = {}) {
 
     const listeners = [];
     const window = {
+        innerWidth: opts.width || 1728,
+        innerHeight: opts.height || 1084,
         addEventListener: (type, fn) => listeners.push({ type, fn }),
     };
 
@@ -237,6 +239,17 @@ function makeTab(name, store, clock, src = SRC, opts = {}) {
 
     // 생성 순서가 아니라 클래스명으로 찾는다. 오버레이에 노드가 늘어도 안 깨진다.
     const byClass = (c) => created.find((e) => e.className === c);
+
+    // 개발자 도구를 열어 창이 좁아진 상황.
+    tab.resizeTo = (w, h) => {
+        window.innerWidth = w;
+        window.innerHeight = h;
+        for (const l of listeners) {
+            if (l.type === 'resize') l.fn();
+        }
+    };
+
+    tab.pos = () => [tab.overlay.style.right, tab.overlay.style.bottom];
 
     tab.overlay = byClass('poe-overlay');
     tab.panel = byClass('poe-panel');
@@ -1094,6 +1107,39 @@ function section(title) {
     check('이 탭이 빠지면 바탕이 돌아온다', Tn.panel.style.background,
           'rgba(38, 44, 56, 0.97)');
     check('홈도 차가운 쪽으로', Tn.detailBtn.style.background, '#13161d');
+
+    section('T36: 창이 좁아져도 오버레이가 화면 밖으로 사라지지 않는다');
+    // 실제로 겪은 버그. 왼쪽 아래로 옮겨두면 right 가 창 폭에 가까운 큰 값이
+    // 된다. 개발자 도구를 열어 창이 좁아지면 그 값이 그대로 남아 패널이 왼쪽
+    // 밖으로 밀려나 사라졌고, 폭을 되돌리기 전까지 다시 잡을 방법이 없었다.
+    const storeRz = makeSharedStore();
+    const clockRz = makeClock();
+
+    const Rz = makeTab('Rz', storeRz, clockRz, SRC, { width: 1728, height: 1084 });
+
+    Rz.dragBy(-1400, -800);                // 왼쪽 아래 구석으로
+
+    check('넓은 창에서는 끈 자리에 있다', Rz.pos(), ['1420px', '880px']);
+
+    Rz.resizeTo(900, 700);                 // 개발자 도구를 열어 창이 좁아짐
+
+    const [r, b] = Rz.pos().map((v) => parseInt(v, 10));
+
+    check('좁아지면 화면 안으로 다시 들어온다',
+          [r <= 900 - 216, b <= 700 - 120], [true, true]);
+    check('음수로 밀려나지도 않는다', [r >= 0, b >= 0], [true, true]);
+
+    Rz.resizeTo(1728, 1084);               // 개발자 도구를 닫음
+
+    check('창이 돌아오면 원래 자리로 복귀한다', Rz.pos(), ['1420px', '880px']);
+
+    section('T37: 좁은 창에서 새로 연 탭도 화면 안에 그린다');
+    // 저장된 값이 이미 지금 창보다 클 수 있다. 시작할 때부터 가둬야 한다.
+    const Rz2 = makeTab('Rz2', storeRz, clockRz, SRC, { width: 800, height: 600 });
+
+    const [r2, b2] = Rz2.pos().map((v) => parseInt(v, 10));
+
+    check('처음부터 화면 안', [r2 <= 800 - 216, b2 <= 600 - 120], [true, true]);
 
     section('A 탭 로그 전문 (형식 눈으로 확인용)');
     for (const [lvl, m] of A.logs) console.log(`  [${lvl}] ${m}`);

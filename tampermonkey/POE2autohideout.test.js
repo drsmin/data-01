@@ -766,11 +766,34 @@ function section(title) {
 
     V.clickTabToggle();
     check('이 탭을 끄면 광채가 꺼진다', V.cardGlowing(), false);
-    check('전체 버튼은 켜진 채 흐려진다', V.btn.style.opacity, '0.4');
-    check('전체 상태 자체는 ON 유지', V.armedText(), '모든 탭 사용 ON');
+    check('상위 버튼은 흐려지지 않는다', V.btn.style.opacity, '1');
+    check('모든 탭 상태 자체는 ON 유지', V.armedText(), '모든 탭 사용 ON');
 
     V.clickTabToggle();
-    check('다시 사용하면 광채가 돌아온다', V.cardGlowing(), true);
+    check('다시 켜면 광채가 돌아온다', V.cardGlowing(), true);
+
+    section('T23b: 모든 탭이 OFF 면 이 탭 스위치는 결정권이 없다');
+    // 흐려지는 쪽은 항상 하위여야 한다. 상위를 흐리게 하면 종속 관계가
+    // 뒤집혀 보인다 — "모든 탭 OFF 인데 이 탭 ON 이니 여긴 움직이나?"
+    V.clickToggle();                       // 모든 탭 OFF
+
+    check('모든 탭 OFF', V.armedText(), '모든 탭 사용 OFF');
+    check('이 탭은 ON 인 채로 남는다', V.tabText(), '이 탭 사용 ON');
+    check('하위 버튼이 흐려진다', V.tabBtn.style.opacity, '0.4');
+    check('상위 버튼은 선명하다', V.btn.style.opacity, '1');
+    check('광채 없음', V.cardGlowing(), false);
+
+    // 그리고 실제로 움직이지 않아야 한다 — 상위 조건이 우선이다.
+    const idTopOff = 'a7'.repeat(32);
+    V.addRow(idTopOff);
+    V.livePush(idTopOff);
+    await V.feed(idTopOff, new Date().toISOString());
+    clockV.flush();
+
+    check('모든 탭 OFF 면 이 탭이 ON 이어도 이동하지 않는다', V.clicks, []);
+
+    V.clickToggle();                       // 다시 모든 탭 ON
+    check('되켜면 하위 버튼도 선명해진다', V.tabBtn.style.opacity, '1');
 
     section('T24: 키 이름이 new 가 아니어도 64자리 id 를 주워 이동한다');
     // 실제로 막힌 지점. {"new":[...]} 를 전제한 파서가 조용히 통과시켰다.

@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-008
+// @version      2026-08-05-009
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -471,12 +471,20 @@ text-align: right;
 
     // 두 스위치의 조합을 한 곳에서 그린다. 각자 자기 버튼만 고치게 두면
     // "모든 탭 ON + 이 탭 OFF" 같은 조합에서 화면이 거짓말을 하게 된다.
+    //
+    // 둘은 대등하지 않다. "모든 탭" 이 상위 조건이고 "이 탭" 은 그 아래서만
+    // 의미를 갖는다 — 모든 탭이 OFF 면 이 탭을 뭘로 두든 이동은 없다.
+    // 그러니 흐려지는 쪽은 항상 하위다. 상위를 흐리게 하면 종속 관계가 뒤집혀
+    // 보이고, "모든 탭 OFF 인데 이 탭 ON 이니까 이 탭은 움직이나?" 로 읽힌다.
     function renderControls() {
 
         const active = hideoutActive();
 
         hideoutBtn.textContent =
             autoHideoutArmed ? '모든 탭 사용 ON' : '모든 탭 사용 OFF';
+
+        // 상위 스위치는 어떤 조합에서도 흐려지지 않는다. 전역 상태를 있는 그대로.
+        hideoutBtn.style.opacity = '1';
 
         if (autoHideoutArmed) {
 
@@ -485,15 +493,11 @@ text-align: right;
             hideoutBtn.style.color = '#1a1206';
             hideoutBtn.style.boxShadow = '0 2px 10px rgba(240, 160, 32, 0.30)';
 
-            // 전체는 켜져 있지만 이 탭이 빠져 있으면 흐리게 — 여기선 안 움직인다.
-            hideoutBtn.style.opacity = tabEnabled ? '1' : '0.4';
-
         } else {
 
             hideoutBtn.style.background = '#262a33';
             hideoutBtn.style.color = C.muted;
             hideoutBtn.style.boxShadow = 'none';
-            hideoutBtn.style.opacity = '1';
 
         }
 
@@ -512,6 +516,10 @@ text-align: right;
             tabBtn.style.background = 'rgba(248, 81, 73, 0.08)';
 
         }
+
+        // 모든 탭이 OFF 면 이 탭 스위치는 아무 일도 하지 않는다. 눌러도 되지만
+        // (미리 꺼둘 수 있다) 지금은 결정권이 없다는 걸 흐림으로 말한다.
+        tabBtn.style.opacity = autoHideoutArmed ? '1' : '0.4';
 
         // 카드가 빛나는 건 "지금 여기서 실제로 이동한다" 는 뜻이어야 한다.
         // 전체만 켜진 상태에서 빛나면 재워둔 탭이 무장한 것처럼 보인다.

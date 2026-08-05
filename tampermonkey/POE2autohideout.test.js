@@ -225,9 +225,11 @@ function makeTab(name, store, clock, src = SRC, opts = {}) {
        () => {}, { script: { version: 'test' } },
        WebSocket_, EventTarget_);
 
-    // createElement 호출 순서: overlay, hideoutBtn, status
-    tab.btn = created[1];
-    tab.status = created[2];
+    // 생성 순서가 아니라 클래스명으로 찾는다. 오버레이에 노드가 늘어도 안 깨진다.
+    const byClass = (c) => created.find((e) => e.className === c);
+
+    tab.btn = byClass('poe-ho-btn');
+    tab.value = (key) => byClass(`poe-v-${key}`);
 
     // body 가 생기고 DOMContentLoaded 가 발화한 시점.
     tab.domReady = () => {
@@ -645,6 +647,28 @@ function section(title) {
     clockE.flush();
 
     check('후킹은 그대로 동작한다', Es.clicks, [idLate]);
+
+    section('T18: 오버레이가 상태를 값 노드에 반영한다');
+    // Live 줄은 장식이 아니라 고장 표시다. 소켓이 없으면 자동 이동은 절대
+    // 발동하지 않으므로 빨간색이어야 하고, 소켓을 잡으면 초록으로 바뀌어야 한다.
+    const storeU = makeSharedStore();
+    const clockU = makeClock();
+
+    const U = makeTab('U', storeU, clockU);
+
+    check('소켓 없으면 Live 가 경고색', U.value('live').style.color, '#f85149');
+    check('소켓 없음 문구', U.value('live').textContent, '● 소켓 없음');
+    check('이동 이력 없으면 대시', U.value('teleport').textContent, '—');
+
+    U.livePush('cd'.repeat(32));
+
+    check('소켓을 잡으면 초록', U.value('live').style.color, '#3fb950');
+    check('소켓/푸시 개수 표시', U.value('live').textContent, '● 1 / 푸시 1');
+
+    // 무장하면 버튼뿐 아니라 카드 전체가 물든다 (곁눈질로 보이도록).
+    U.clickToggle();
+    check('무장 시 카드 테두리가 호박색',
+          U.btn.style.boxShadow.includes('240, 160, 32'), true);
 
     section('A 탭 로그 전문 (형식 눈으로 확인용)');
     for (const [lvl, m] of A.logs) console.log(`  [${lvl}] ${m}`);

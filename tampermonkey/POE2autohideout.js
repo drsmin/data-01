@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-004
+// @version      2026-08-05-005
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -65,6 +65,14 @@
     // 매물이 뜰 때마다 계속 이동한다. 무장 해제가 그걸 끊는 유일한 정지점이다.
     // 연속 이동을 원하면 false 로 두고 쿨다운에만 의존한다.
     const DISARM_AFTER_TELEPORT = true;
+
+    // 라이브 소켓이 밀어준 매물만 자동 이동시킨다 (아래 "라이브 소켓" 참고).
+    // false 로 내리면 라이브 확인 없이 이동한다 — 수동 검색에도 이동하던 예전 동작.
+    // 소켓을 못 잡는 상황에서 급히 되돌리기 위한 스위치다.
+    //
+    // 오버레이(updateStatus)가 초기화 중에 바로 읽으므로 여기 있어야 한다.
+    // 라이브 소켓 절에 두면 TDZ 로 터진다.
+    const REQUIRE_LIVE_PUSH = true;
 
     const SERVER_BASE = 'http://127.0.0.1:5001';
 
@@ -211,46 +219,149 @@
 
     /*********************************************************
      * UI 오버레이
+     *
+     * 거래소 위에 얹히는 패널이라 세 가지를 지킨다.
+     *   1. 페이지를 가리지 않는다  — 평소 반투명, 마우스를 올리면 선명해진다
+     *   2. 곁눈질로 읽힌다        — 무장 중이면 카드 전체가 호박색으로 빛난다
+     *   3. 숫자가 안 흔들린다      — 시각은 tabular-nums 로 자리를 고정한다
+     *
+     * 색은 어두운 유리판 한 장에 상태색 세 개(호박/초록/빨강)만 쓴다.
+     * 클래스명은 테스트가 노드를 찾는 손잡이다 (생성 순서에 기대지 않게).
      *********************************************************/
+    const C = {
+        text: '#e6e8ec',
+        muted: '#7f8794',
+        faint: '#5d646f',
+        amber: '#f0a020',
+        green: '#3fb950',
+        red: '#f85149'
+    };
+
+    const FONT = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,'
+        + ' "Helvetica Neue", Arial, sans-serif';
+
     const overlay = document.createElement('div');
+
+    overlay.className = 'poe-overlay';
 
     overlay.style.cssText = `
 position: fixed;
 bottom: 80px;
 right: 20px;
-background: #ffffff;
-color: #000000;
-padding: 10px 12px;
-border-radius: 10px;
-font-family: sans-serif;
-font-size: 12px;
 z-index: 999999;
-box-shadow: 0 2px 10px rgba(0,0,0,0.3);
-white-space: pre;
-min-width: 220px;
+box-sizing: border-box;
+width: 236px;
+padding: 12px;
+background: rgba(18, 20, 26, 0.92);
+backdrop-filter: blur(10px);
+-webkit-backdrop-filter: blur(10px);
+border: 1px solid rgba(255, 255, 255, 0.10);
+border-radius: 12px;
+box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45);
+color: ${C.text};
+font-family: ${FONT};
+font-size: 11px;
+line-height: 1.5;
+opacity: 0.9;
+transition: opacity .15s ease, box-shadow .25s ease, border-color .25s ease;
+user-select: none;
 `;
 
+    // 평소엔 한 발 물러나 있다가 볼 때만 또렷해진다.
+    overlay.onmouseenter = () => { overlay.style.opacity = '1'; };
+    overlay.onmouseleave = () => { overlay.style.opacity = '0.9'; };
+
     const hideoutBtn = document.createElement('button');
+
+    hideoutBtn.className = 'poe-ho-btn';
 
     hideoutBtn.textContent = 'AUTO HO OFF';
 
     hideoutBtn.style.cssText = `
-display:block;
-width:100%;
-margin-bottom:6px;
-padding:6px;
-font-weight:bold;
-cursor:pointer;
-background:#555;
-color:#fff;
-border:none;
-border-radius:4px;
+display: block;
+box-sizing: border-box;
+width: 100%;
+margin: 0 0 10px;
+padding: 8px 10px;
+font-family: inherit;
+font-size: 11px;
+font-weight: 700;
+letter-spacing: 0.8px;
+cursor: pointer;
+border: none;
+border-radius: 8px;
+transition: background .15s ease, color .15s ease, box-shadow .15s ease;
 `;
 
-    const status = document.createElement('div');
+    const grid = document.createElement('div');
+
+    grid.style.cssText = `
+display: grid;
+grid-template-columns: auto 1fr;
+gap: 3px 10px;
+align-items: baseline;
+`;
+
+    // 라벨/값 한 줄을 만들고 값 노드를 돌려준다. updateStatus 는 값만 고쳐 쓴다.
+    function addRow(label, key) {
+
+        const l = document.createElement('div');
+
+        l.textContent = label;
+
+        l.style.cssText = `
+color: ${C.muted};
+font-size: 9.5px;
+font-weight: 600;
+letter-spacing: 0.6px;
+text-transform: uppercase;
+white-space: nowrap;
+`;
+
+        const v = document.createElement('div');
+
+        v.className = `poe-v-${key}`;
+
+        v.style.cssText = `
+text-align: right;
+font-variant-numeric: tabular-nums;
+white-space: nowrap;
+overflow: hidden;
+text-overflow: ellipsis;
+`;
+
+        grid.appendChild(l);
+        grid.appendChild(v);
+
+        return v;
+
+    }
+
+    const vStatus = addRow('Status', 'status');
+    const vServer = addRow('Server', 'server');
+    const vLive = addRow('Live', 'live');
+    const vAlert = addRow('Alert', 'alert');
+    const vTeleport = addRow('Teleport', 'teleport');
+
+    const footer = document.createElement('div');
+
+    footer.className = 'poe-version';
+
+    footer.textContent = `v${version}`;
+
+    footer.style.cssText = `
+margin-top: 10px;
+padding-top: 7px;
+border-top: 1px solid rgba(255, 255, 255, 0.07);
+color: ${C.faint};
+font-size: 9px;
+letter-spacing: 0.3px;
+text-align: right;
+`;
 
     overlay.appendChild(hideoutBtn);
-    overlay.appendChild(status);
+    overlay.appendChild(grid);
+    overlay.appendChild(footer);
 
     // 오버레이가 못 붙어도 알림/텔레포트는 계속 동작해야 한다.
     // (status 는 분리된 노드로 남아 updateStatus 가 그대로 쓴다.)
@@ -311,8 +422,30 @@ border-radius:4px;
 
         hideoutBtn.textContent = state ? 'AUTO HO ON' : 'AUTO HO OFF';
 
-        hideoutBtn.style.background =
-            state ? '#f39c12' : '#555';
+        // 무장은 "지금 이 화면이 나를 게임 밖으로 끌어낼 수 있다" 는 뜻이다.
+        // 버튼만 바꾸지 않고 카드 전체를 물들여, 다른 창을 보다가도 눈에 띄게 한다.
+        if (state) {
+
+            hideoutBtn.style.background =
+                'linear-gradient(180deg, #f7bb52 0%, #e8961a 100%)';
+            hideoutBtn.style.color = '#1a1206';
+            hideoutBtn.style.boxShadow = '0 2px 10px rgba(240, 160, 32, 0.30)';
+
+            overlay.style.borderColor = 'rgba(240, 160, 32, 0.45)';
+            overlay.style.boxShadow =
+                '0 8px 28px rgba(0, 0, 0, 0.45),'
+                + ' 0 0 0 1px rgba(240, 160, 32, 0.18)';
+
+        } else {
+
+            hideoutBtn.style.background = '#262a33';
+            hideoutBtn.style.color = C.muted;
+            hideoutBtn.style.boxShadow = 'none';
+
+            overlay.style.borderColor = 'rgba(255, 255, 255, 0.10)';
+            overlay.style.boxShadow = '0 8px 28px rgba(0, 0, 0, 0.45)';
+
+        }
 
     }
 
@@ -332,21 +465,42 @@ border-radius:4px;
     // 서버 헬스체크 콜백이 'Notified' 를 즉시 덮어쓰지 않도록 마지막 상태를 기억한다.
     let statusText = 'Running';
 
+    // 값 + 색을 함께 쓴다. 색만으로 뜻을 전하지 않도록 글자도 항상 같이 바꾼다.
+    function setValue(node, text, color) {
+
+        node.textContent = text;
+        node.style.color = color || C.text;
+
+    }
+
     function updateStatus(text) {
 
         if (text !== undefined) statusText = text;
 
-        const fmt = (d) => d ? d.toLocaleTimeString() : 'None';
+        const fmt = (d) => (d ? d.toLocaleTimeString() : '—');
+
+        setValue(vStatus, statusText);
+
+        setValue(vServer,
+                 serverAlive ? '● ON' : '● OFF',
+                 serverAlive ? C.green : C.faint);
 
         // Live 는 라이브 소켓이 실제로 관찰되고 있는지 눈으로 확인하는 줄이다.
-        // 소켓 0개면 자동 이동은 절대 발동하지 않는다 (REQUIRE_LIVE_PUSH).
-        status.textContent =
-            `Version: ${version}
-Status: ${statusText}
-Server: ${serverAlive ? 'ON':'OFF'}
-Live: ${liveSocketCount ? `소켓 ${liveSocketCount} / 푸시 ${livePushCount}` : '소켓 없음'}
-Last Alert: ${fmt(lastAlert)}
-Last Teleport: ${fmt(lastTeleport)}`;
+        // 소켓이 0이면 자동 이동은 절대 발동하지 않으므로(REQUIRE_LIVE_PUSH)
+        // 그건 "정보" 가 아니라 "고장" 이다. 빨간색으로 띄운다.
+        if (liveSocketCount) {
+
+            setValue(vLive, `● ${liveSocketCount} / 푸시 ${livePushCount}`, C.green);
+
+        } else {
+
+            setValue(vLive, '● 소켓 없음',
+                     REQUIRE_LIVE_PUSH ? C.red : C.faint);
+
+        }
+
+        setValue(vAlert, fmt(lastAlert), lastAlert ? C.text : C.faint);
+        setValue(vTeleport, fmt(lastTeleport), lastTeleport ? C.text : C.faint);
 
     }
 
@@ -1088,9 +1242,6 @@ Last Teleport: ${fmt(lastTeleport)}`;
      *   - 막을 때마다 왜 막았는지 남긴다
      * 그래도 안 되면 REQUIRE_LIVE_PUSH 를 false 로 내려 예전 동작으로 되돌린다.
      *********************************************************/
-    // false 로 두면 라이브 확인 없이 이동한다 (수동 검색에도 이동하던 예전 동작).
-    const REQUIRE_LIVE_PUSH = true;
-
     const MAX_LIVE_IDS = 500;
 
     // 소켓이 알려준 뒤 이 시간 안에 fetch 되지 않으면 잊는다.

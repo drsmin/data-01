@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-006
+// @version      2026-08-05-007
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -1354,48 +1354,90 @@ text-align: right;
 
     const hookedSockets = new WeakSet();
 
-    let unknownLiveMsgReported = false;
+    // 소켓 원문을 앞쪽 몇 건만 그대로 남긴다.
+    //
+    // 앞 버전은 "{"new":[...]} 가 아닌 메시지" 만 1회 남겼는데, 그 조건 자체가
+    // 형식을 안다고 전제한 것이었다. 실제로는 매물이 떴는데도 아무 로그가 없었다.
+    // 무엇이 오는지 모를 때는 판단하지 말고 원문을 남겨야 한다.
+    const MAX_RAW_LIVE_LOGS = 8;
 
-    function handleLiveMessage(ev) {
+    let rawLiveLogged = 0;
+
+    function logRawLive(kind, preview) {
+
+        if (rawLiveLogged >= MAX_RAW_LIVE_LOGS) return;
+
+        rawLiveLogged++;
+
+        log('LIVE', `원문 #${rawLiveLogged} [${kind}] ${preview}`
+            + (rawLiveLogged === MAX_RAW_LIVE_LOGS
+               ? ' — 원문 로그는 여기까지만 남긴다' : ''));
+
+    }
+
+    // 매물 id 는 64자리 16진수다. 키 이름이 new 든 뭐든 상관없이 그 모양만 줍는다.
+    //
+    // 키 이름을 맞히려 들면 틀렸을 때 또 조용히 실패한다. 값의 모양은 응답
+    // 본문(result[].id)에서 이미 확인된 사실이라 훨씬 단단한 근거다.
+    const ITEM_ID_RE = /^[0-9a-f]{64}$/i;
+
+    function collectItemIds(value, out, depth) {
+
+        out = out || [];
+        depth = depth || 0;
+
+        if (depth > 6 || out.length >= 200) return out;
+
+        if (typeof value === 'string') {
+
+            if (ITEM_ID_RE.test(value)) out.push(value);
+
+            return out;
+
+        }
+
+        if (Array.isArray(value)) {
+
+            for (const v of value) collectItemIds(v, out, depth + 1);
+
+            return out;
+
+        }
+
+        if (value && typeof value === 'object') {
+
+            for (const k of Object.keys(value)) {
+                collectItemIds(value[k], out, depth + 1);
+            }
+
+        }
+
+        return out;
+
+    }
+
+    function processLiveText(text) {
 
         try {
 
-            const data = ev?.data;
-
-            if (typeof data !== 'string') return;
+            logRawLive('text', String(text).slice(0, 300));
 
             let msg;
 
             try {
 
-                msg = JSON.parse(data);
+                msg = JSON.parse(text);
 
             } catch (e) {
 
-                // 하트비트 등 JSON 이 아닌 메시지는 정상이다. 조용히 넘긴다.
+                // 하트비트 등 JSON 이 아닌 메시지는 정상이다. 원문은 이미 남겼다.
                 return;
 
             }
 
-            // POE 라이브 검색은 {"new":["<id>", ...]} 를 보낸다.
-            const ids = msg?.new;
+            const ids = collectItemIds(msg);
 
-            if (!Array.isArray(ids)) {
-
-                // auth 응답 등은 정상이므로 무시하되, 형식이 통째로 다른 경우를
-                // 알아챌 수 있게 원문을 딱 한 번 남긴다.
-                if (!unknownLiveMsgReported && msg && !('auth' in msg)) {
-
-                    unknownLiveMsgReported = true;
-
-                    log('LIVE', 'new 배열이 없는 메시지 (형식 확인용, 최초 1회만)',
-                        data.slice(0, 300));
-
-                }
-
-                return;
-
-            }
+            if (!ids.length) return;
 
             const now = Date.now();
 
@@ -1405,24 +1447,63 @@ text-align: right;
 
             }
 
-            let added = 0;
-
-            for (const id of ids) {
-
-                if (typeof id !== 'string' || !id) continue;
-
-                livePushIds.set(id, now);
-                added++;
-
-            }
+            for (const id of ids) livePushIds.set(id, now);
 
             trimOldest(livePushIds, MAX_LIVE_IDS);
 
-            livePushCount += added;
+            livePushCount += ids.length;
             updateStatus();
 
-            log('LIVE', `푸시 ${added}건 — 자동 이동 허용`
+            log('LIVE', `푸시 ${ids.length}건 — 자동 이동 허용`
                 + ` (${ids.map(shortId).join(',')})`);
+
+        } catch (e) {
+
+            fail('LIVE', '소켓 메시지 해석 중 예외', e);
+
+        }
+
+    }
+
+    function handleLiveMessage(ev) {
+
+        try {
+
+            const data = ev?.data;
+
+            if (typeof data === 'string') {
+
+                processLiveText(data);
+                return;
+
+            }
+
+            // 바이너리 프레임. 앞 버전은 여기서 로그 한 줄 없이 빠져나갔다.
+            if (typeof ArrayBuffer !== 'undefined' && data instanceof ArrayBuffer) {
+
+                if (typeof TextDecoder === 'undefined') {
+
+                    logRawLive('ArrayBuffer', `${data.byteLength}바이트 (디코더 없음)`);
+                    return;
+
+                }
+
+                processLiveText(new TextDecoder().decode(data));
+                return;
+
+            }
+
+            if (typeof Blob !== 'undefined' && data instanceof Blob) {
+
+                data.text()
+                    .then(processLiveText)
+                    .catch((e) => fail('LIVE', 'Blob 메시지를 읽지 못했다', e));
+
+                return;
+
+            }
+
+            logRawLive(typeof data, String(data).slice(0, 200));
 
         } catch (e) {
 

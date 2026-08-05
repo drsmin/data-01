@@ -772,6 +772,91 @@ function section(title) {
     V.clickTabToggle();
     check('다시 사용하면 광채가 돌아온다', V.cardGlowing(), true);
 
+    section('T24: 키 이름이 new 가 아니어도 64자리 id 를 주워 이동한다');
+    // 실제로 막힌 지점. {"new":[...]} 를 전제한 파서가 조용히 통과시켰다.
+    // 키 이름을 맞히는 대신 값의 모양(64자리 16진수)으로 찾는다.
+    const hex = (c) => c.repeat(64);
+
+    for (const [label, payload, id] of [
+        ['{"new":[id]}', (i) => ({ new: [i] }), hex('1')],
+        ['{"ids":[id]}', (i) => ({ ids: [i] }), hex('2')],
+        ['중첩 {"data":{"items":[{"id":id}]}}',
+         (i) => ({ data: { items: [{ id: i }] } }), hex('3')],
+        ['벌거벗은 배열 [id]', (i) => [i], hex('4')],
+    ]) {
+
+        const st = makeSharedStore();
+        const ck = makeClock();
+        const tb = makeTab('K', st, ck);
+
+        tb.clickToggle();
+        tb.addRow(id);
+
+        const sk = tb.openSocket('wss://poe.kakaogames.com/api/trade/live/L/x');
+        sk.deliver(JSON.stringify(payload(id)));
+
+        await tb.feed(id, new Date().toISOString());
+        ck.flush();
+
+        check(`${label} → 이동`, tb.clicks, [id]);
+
+    }
+
+    section('T25: 매물 id 가 아닌 문자열은 줍지 않는다');
+    // 아무 문자열이나 주우면 인증 토큰 같은 게 허가로 둔갑한다.
+    const storeN = makeSharedStore();
+    const clockN = makeClock();
+
+    const N = makeTab('N', storeN, clockN);
+    N.clickToggle();
+
+    const idNoise = hex('5');
+    N.addRow(idNoise);
+
+    const skN = N.openSocket('wss://poe.kakaogames.com/api/trade/live/L/x');
+    skN.deliver(JSON.stringify({ auth: true, token: 'abc123', name: '짧은문자열' }));
+
+    await N.feed(idNoise, new Date().toISOString());
+    clockN.flush();
+
+    check('무관한 메시지로는 허가가 생기지 않음', N.clicks, []);
+
+    section('T26: 문자열이 아닌 프레임도 로그를 남긴다');
+    // 앞 버전은 여기서 로그 한 줄 없이 빠져나갔다 — 매물이 떠도 콘솔이 조용했다.
+    const storeB = makeSharedStore();
+    const clockB = makeClock();
+
+    const Bn = makeTab('Bn', storeB, clockB);
+    Bn.clickToggle();
+
+    const idBin = hex('6');
+    Bn.addRow(idBin);
+
+    const skB = Bn.openSocket('wss://poe.kakaogames.com/api/trade/live/L/x');
+    skB.deliver(new TextEncoder().encode(JSON.stringify({ new: [idBin] })).buffer);
+
+    await Bn.feed(idBin, new Date().toISOString());
+    clockB.flush();
+
+    check('ArrayBuffer 프레임도 해석해 이동', Bn.clicks, [idBin]);
+    check('원문 로그를 남긴다',
+          Bn.logs.some(([, m]) => m.includes('[POE][LIVE] 원문 #1')), true);
+
+    section('T27: 원문 로그는 상한에서 멈춘다');
+    const storeQ = makeSharedStore();
+    const clockQ = makeClock();
+
+    const Q = makeTab('Q', storeQ, clockQ);
+    const skQ = Q.openSocket('wss://poe.kakaogames.com/api/trade/live/L/x');
+
+    for (let i = 0; i < 20; i++) skQ.deliver('ping');
+
+    const raws = Q.logs.filter(([, m]) => m.includes('[POE][LIVE] 원문 #'));
+
+    check('상한 8건에서 멈춘다', raws.length, 8);
+    check('마지막 줄이 끝을 알린다',
+          raws[raws.length - 1][1].includes('원문 로그는 여기까지만'), true);
+
     section('A 탭 로그 전문 (형식 눈으로 확인용)');
     for (const [lvl, m] of A.logs) console.log(`  [${lvl}] ${m}`);
 

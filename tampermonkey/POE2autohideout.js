@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-009
+// @version      2026-08-05-010
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -1244,6 +1244,16 @@ text-align: right;
 
     }
 
+    function expireOlderThan(map, now, ttl) {
+
+        for (const [k, at] of map) {
+
+            if (now - at > ttl) map.delete(k);
+
+        }
+
+    }
+
     function rememberItemId(id) {
 
         usedItemIds.add(id);
@@ -1378,6 +1388,18 @@ text-align: right;
     // 소켓이 밀어준 매물 id → 수신 시각(ms).
     const livePushIds = new Map();
 
+    // 소켓이 준 fetch 토큰 → 수신 시각(ms).
+    //
+    // 카카오 거래소의 라이브 프로토콜은 매물 id 를 보내지 않는다. 서명된 토큰
+    // 하나를 보내고, 사이트는 그 토큰을 fetch 경로에 그대로 박아 요청한다.
+    //   소켓  {"result":"eyJ0eXAi...<JWT>"}
+    //   요청  /api/trade/fetch/eyJ0eXAi...<JWT>?query=<검색id>
+    // 매물 id 는 응답 본문에만 나온다 (목록이 토큰 서명 안에 봉인돼 있다).
+    //
+    // 그래서 id 대신 토큰을 대조한다. 토큰은 푸시마다 유일하므로 추측이 아니라
+    // 증명이다 — 그 URL 로 온 응답은 그 푸시가 맞다.
+    const livePushTokens = new Map();
+
     const hookedSockets = new WeakSet();
 
     // 소켓 원문을 앞쪽 몇 건만 그대로 남긴다.
@@ -1407,16 +1429,23 @@ text-align: right;
     // 본문(result[].id)에서 이미 확인된 사실이라 훨씬 단단한 근거다.
     const ITEM_ID_RE = /^[0-9a-f]{64}$/i;
 
-    function collectItemIds(value, out, depth) {
+    // fetch 토큰: base64url 세 토막을 점으로 이은 JWT 모양.
+    const LIVE_TOKEN_RE =
+        /^[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}$/;
 
-        out = out || [];
+    // 매물 id 와 fetch 토큰을 함께 줍는다. 어느 쪽이 올지는 프로토콜에 달렸고,
+    // 둘 다 받아두면 카카오가 형식을 되돌려도 그대로 동작한다.
+    function collectLiveRefs(value, out, depth) {
+
+        out = out || { ids: [], tokens: [] };
         depth = depth || 0;
 
-        if (depth > 6 || out.length >= 200) return out;
+        if (depth > 6 || out.ids.length + out.tokens.length >= 200) return out;
 
         if (typeof value === 'string') {
 
-            if (ITEM_ID_RE.test(value)) out.push(value);
+            if (ITEM_ID_RE.test(value)) out.ids.push(value);
+            else if (LIVE_TOKEN_RE.test(value)) out.tokens.push(value);
 
             return out;
 
@@ -1424,7 +1453,7 @@ text-align: right;
 
         if (Array.isArray(value)) {
 
-            for (const v of value) collectItemIds(v, out, depth + 1);
+            for (const v of value) collectLiveRefs(v, out, depth + 1);
 
             return out;
 
@@ -1433,7 +1462,7 @@ text-align: right;
         if (value && typeof value === 'object') {
 
             for (const k of Object.keys(value)) {
-                collectItemIds(value[k], out, depth + 1);
+                collectLiveRefs(value[k], out, depth + 1);
             }
 
         }
@@ -1461,27 +1490,32 @@ text-align: right;
 
             }
 
-            const ids = collectItemIds(msg);
+            const { ids, tokens } = collectLiveRefs(msg);
 
-            if (!ids.length) return;
+            if (!ids.length && !tokens.length) return;
 
             const now = Date.now();
 
-            for (const [id, at] of livePushIds) {
-
-                if (now - at > LIVE_PUSH_TTL_MS) livePushIds.delete(id);
-
-            }
+            expireOlderThan(livePushIds, now, LIVE_PUSH_TTL_MS);
+            expireOlderThan(livePushTokens, now, LIVE_PUSH_TTL_MS);
 
             for (const id of ids) livePushIds.set(id, now);
+            for (const t of tokens) livePushTokens.set(t, now);
 
             trimOldest(livePushIds, MAX_LIVE_IDS);
+            trimOldest(livePushTokens, MAX_LIVE_IDS);
 
-            livePushCount += ids.length;
+            livePushCount += ids.length + tokens.length;
             updateStatus();
 
-            log('LIVE', `푸시 ${ids.length}건 — 자동 이동 허용`
-                + ` (${ids.map(shortId).join(',')})`);
+            // 무엇으로 왔는지 남긴다. 프로토콜이 또 바뀌면 이 줄이 먼저 달라진다.
+            const what = [
+                ids.length ? `id ${ids.map(shortId).join(',')}` : '',
+                tokens.length ? `토큰 ${tokens.map(shortId).join(',')}` : ''
+            ].filter(Boolean).join(' + ');
+
+            log('LIVE', `푸시 ${ids.length + tokens.length}건`
+                + ` — 자동 이동 허용 (${what})`);
 
         } catch (e) {
 
@@ -1627,11 +1661,66 @@ text-align: right;
 
     }
 
+    // fetch URL 의 경로 부분 (/api/trade/fetch/<여기>?query=...).
+    // 라이브면 소켓이 준 토큰 하나, 수동 검색이면 id 콤마 목록이 들어 있다.
+    function fetchPathSegment(url) {
+
+        const m = String(url || '').match(/\/fetch\/([^?#]+)/);
+
+        if (!m) return null;
+
+        try {
+
+            return decodeURIComponent(m[1]);
+
+        } catch (e) {
+
+            // 잘못된 % 시퀀스. 원문 그대로 대조하면 된다.
+            return m[1];
+
+        }
+
+    }
+
+    let unknownTokenReported = false;
+
     // consumeSearchOrigin 과 같은 이유로 루프 밖에서 한 번에 소비한다.
-    function consumeLivePush(results) {
+    function consumeLivePush(results, url) {
 
         const fromLive = new Set();
 
+        // 1) 토큰 경로. URL 자체가 소켓이 준 토큰이면 이 응답 전체가 그 푸시다.
+        //
+        // 토큰은 소비하지 않는다. 사이트가 같은 토큰으로 재시도해도 서버가 돌려주는
+        // 매물은 같다(목록이 서명 안에 봉인돼 있다). 소비해버리면 재시도 한 번에
+        // 이동을 놓친다. 중복 발동은 usedItemIds 와 TTL 이 이미 막는다.
+        const seg = fetchPathSegment(url);
+
+        if (seg && livePushTokens.has(seg)) {
+
+            for (const r of results) {
+
+                if (r?.id) fromLive.add(r.id);
+
+            }
+
+            return fromLive;
+
+        }
+
+        // 토큰 모양인데 기록에 없다 = 소켓 메시지를 놓쳤다는 뜻이다.
+        // 조용히 막으면 또 원인을 못 찾으므로 한 번은 남긴다.
+        if (seg && LIVE_TOKEN_RE.test(seg) && !unknownTokenReported) {
+
+            unknownTokenReported = true;
+
+            warn('LIVE', '토큰 경로로 온 fetch 인데 소켓 기록에 없다'
+                 + ' — 소켓 메시지를 놓쳤거나 다른 탭의 토큰이다'
+                 + ` (기록 ${livePushTokens.size}건, 이후 동일 경고는 생략)`);
+
+        }
+
+        // 2) id 목록 방식. 이쪽은 한 번 쓰면 지운다 (consumeSearchOrigin 참고).
         for (const r of results) {
 
             const id = r?.id;
@@ -1659,11 +1748,12 @@ text-align: right;
 
         }
 
-        return `라이브 푸시 목록에 없다 (소켓 ${liveSocketCount}개 관찰 중)`;
+        return '라이브 푸시로 확인되지 않았다'
+            + ` (소켓 ${liveSocketCount}개 관찰, 토큰 ${livePushTokens.size}건 대기)`;
 
     }
 
-    function processTradeResults(json, source = 'UNKNOWN') {
+    function processTradeResults(json, source = 'UNKNOWN', url = '') {
 
         // 예외가 터졌을 때 어느 매물에서였는지 알 수 있어야 한다.
         let currentId = null;
@@ -1682,7 +1772,7 @@ text-align: right;
             // 루프에 들어가기 전에 출처를 확정한다. 루프 안에서 하면 continue/break
             // 때문에 일부 id 가 소비되지 않은 채 남는다 (consumeSearchOrigin 참고).
             const fromSearch = consumeSearchOrigin(results);
-            const fromLive = consumeLivePush(results);
+            const fromLive = consumeLivePush(results, url);
 
             for (const r of results) {
 
@@ -1862,7 +1952,7 @@ text-align: right;
                     // 써야 하므로). 그래서 여기서 기록해 두면 뒤따르는 fetch 에서
                     // 출처를 판별할 수 있다.
                     if (kind === 'search') recordSearchResults(result, game);
-                    else processTradeResults(result, game);
+                    else processTradeResults(result, game, url);
 
                 } else if (url.includes('/api/')) {
 

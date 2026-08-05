@@ -196,13 +196,23 @@ function makeTab(name, store, clock, src = SRC, opts = {}) {
         return sock;
     };
 
-    // 라이브 소켓이 신규 매물을 밀어준 것처럼. 소켓은 탭당 한 번만 연다.
-    tab.livePush = (...ids) => {
+    const ensureSock = () => {
         if (!tab.sock) {
             tab.sock = tab.openSocket(
                 'wss://poe.kakaogames.com/api/trade/live/Standard/9zRwreG8CK');
         }
-        tab.sock.deliver(JSON.stringify({ new: ids }));
+        return tab.sock;
+    };
+
+    // 구 프로토콜: 소켓이 매물 id 목록을 준다.
+    tab.livePush = (...ids) => {
+        ensureSock().deliver(JSON.stringify({ new: ids }));
+    };
+
+    // 실제 카카오 프로토콜: 소켓이 서명 토큰 하나를 주고, 사이트는 그 토큰을
+    // fetch 경로에 그대로 박아 요청한다. 매물 id 는 응답 본문에만 있다.
+    tab.livePushToken = (token) => {
+        ensureSock().deliver(JSON.stringify({ result: token }));
     };
 
     const MutationObserver = class {
@@ -268,9 +278,11 @@ function makeTab(name, store, clock, src = SRC, opts = {}) {
     // 거래소 fetch 응답 1건을 흘려보낸다.
     // 기본은 POE1(/api/trade/fetch) — 실제 응답/DOM 을 대조해 확인된 쪽이다.
     // POE2 경로를 보려면 api='trade2' 로 넘긴다.
-    tab.feed = async (id, indexedIso, api = 'trade') => {
+    // path 를 주면 그 경로로 요청한 것처럼 만든다 (라이브는 토큰 경로를 쓴다).
+    tab.feed = async (id, indexedIso, api = 'trade', path = null) => {
         const res = new Response(
-            `https://poe.kakaogames.com/api/${api}/fetch/` + id,
+            `https://poe.kakaogames.com/api/${api}/fetch/`
+            + (path || id) + '?query=6zBYj3w9sG',
             {
                 result: [{
                     id,
@@ -554,9 +566,9 @@ function section(title) {
     clockS.flush();
 
     check('목록에 없으면 클릭하지 않음', S.clicks, [idLive]);
-    check('소켓은 봤지만 목록에 없다는 이유가 남는다',
+    check('소켓은 봤지만 확인 안 됐다는 이유가 남는다',
           S.logs.some(([, m]) =>
-              m.includes('skip: 라이브 푸시 목록에 없다')), true);
+              m.includes('skip: 라이브 푸시로 확인되지 않았다')), true);
 
     section('T14: 라이브 푸시는 1회만 유효하다 (소비)');
     // 목록에 남겨두면 같은 id 의 오래된 fetch 가 나중에 이동을 일으킬 수 있다.
@@ -580,9 +592,9 @@ function section(title) {
     clockC.flush();
 
     check('소비된 허가로는 다시 이동하지 않음', Cs.clicks, []);
-    check('두 번째는 목록에 없다는 이유',
+    check('두 번째는 확인 안 됨 이유',
           Cs.logs.filter(([, m]) =>
-              m.includes('라이브 푸시 목록에 없다')).length, 1);
+              m.includes('라이브 푸시로 확인되지 않았다')).length, 1);
 
     section('T15: 사이트가 onmessage 로 핸들러를 달아도 소켓을 관찰한다');
     // 사이트가 addEventListener 를 쓸지 onmessage 를 쓸지 모른다. 둘 다 잡아야 한다.
@@ -879,6 +891,71 @@ function section(title) {
     check('상한 8건에서 멈춘다', raws.length, 8);
     check('마지막 줄이 끝을 알린다',
           raws[raws.length - 1][1].includes('원문 로그는 여기까지만'), true);
+
+    section('T28: 실제 카카오 프로토콜 — 소켓 토큰과 fetch 경로를 대조한다');
+    // 소켓은 매물 id 를 주지 않는다. 서명 토큰 하나를 주고, 사이트가 그 토큰을
+    // fetch 경로에 박아 요청한다. id 는 응답 본문에만 나온다.
+    const TOKEN = 'eyJ0eXAiOiJKV1QiLCJhbGciOiJFUzI1NiJ9'
+        + '.eyJpc3MiOiI2ekJZajN3OXNHIiwiZXhwIjoxNzg1OTAyNDU3fQ'
+        + '.NcEpUwju3SFrQbk8-gIRTVS5k71WGz1nNAdLUhqpr0BpB7UpEOCfJHb4ScXIPW8';
+
+    const storeZ = makeSharedStore();
+    const clockZ = makeClock();
+
+    const Z = makeTab('Z', storeZ, clockZ);
+    Z.clickToggle();
+
+    const idTok = '9c'.repeat(32);
+    Z.addRow(idTok);
+
+    Z.livePushToken(TOKEN);
+    await Z.feed(idTok, new Date().toISOString(), 'trade', TOKEN);
+    clockZ.flush();
+
+    check('토큰 경로로 온 응답은 이동한다', Z.clicks, [idTok]);
+    check('토큰 수신 로그에 종류가 남는다',
+          Z.logs.some(([, m]) => m.includes('[POE][LIVE] 푸시 1건')
+                     && m.includes('토큰')), true);
+
+    section('T29: 소켓이 준 적 없는 토큰 경로는 막고 경고를 남긴다');
+    // 다른 탭의 토큰이거나 소켓 메시지를 놓친 경우. 조용히 막으면 또 원인을 못 찾는다.
+    const storeY = makeSharedStore();
+    const clockY = makeClock();
+
+    const Y = makeTab('Y', storeY, clockY);
+    Y.clickToggle();
+
+    const idBad = '9d'.repeat(32);
+    Y.addRow(idBad);
+
+    await Y.feed(idBad, new Date().toISOString(), 'trade', TOKEN);   // 푸시 없이
+    clockY.flush();
+
+    check('기록에 없는 토큰이면 이동하지 않음', Y.clicks, []);
+    check('토큰 불일치 경고를 남긴다',
+          Y.logs.some(([lvl, m]) =>
+              lvl === 'warn' && m.includes('소켓 기록에 없다')), true);
+
+    section('T30: 수동 검색의 id 콤마 경로는 토큰으로 오인하지 않는다');
+    // 수동 검색은 /fetch/<id>,<id>,... 로 온다. 이게 토큰으로 통과하면
+    // 원래 고치려던 버그가 그대로 돌아온다.
+    const storeX = makeSharedStore();
+    const clockX = makeClock();
+
+    const X = makeTab('X', storeX, clockX);
+    X.clickToggle();
+    X.livePushToken(TOKEN);            // 소켓은 살아 있고 토큰도 기록돼 있다
+
+    const idManual = '9e'.repeat(32);
+    X.addRow(idManual);
+
+    await X.feed(idManual, new Date().toISOString(), 'trade',
+                 `${idManual},${'9f'.repeat(32)}`);
+    clockX.flush();
+
+    check('id 콤마 경로로는 이동하지 않음', X.clicks, []);
+    check('토큰 경고를 남기지 않는다 (토큰 모양이 아니므로)',
+          X.logs.some(([lvl]) => lvl === 'warn'), false);
 
     section('A 탭 로그 전문 (형식 눈으로 확인용)');
     for (const [lvl, m] of A.logs) console.log(`  [${lvl}] ${m}`);

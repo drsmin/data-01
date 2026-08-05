@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-002
+// @version      2026-08-05-003
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -1166,6 +1166,32 @@ Last Teleport: ${fmt(lastTeleport)}`;
         }
     }
 
+    // 후킹은 걸렸는데 /search 를 못 보는 상황을 구분하기 위한 진단.
+    //
+    // "search 로그가 없다" 만으로는 원인을 좁힐 수 없다.
+    //   (a) 거래소가 검색을 fetch() 가 아닌 경로(XHR 등)로 보낸다  → 여기에 아무것도 안 찍힘
+    //   (b) 검색 엔드포인트 경로명이 예상과 다르다                  → 여기에 그 경로가 찍힘
+    // 경로별로 최초 1회만 남기므로 콘솔이 시끄러워지지 않는다.
+    const seenApiPaths = new Set();
+
+    function logUnhandledApi(url) {
+
+        // 쿼리스트링과 오리진을 떼고, fetch 처럼 경로에 id 가 붙는 경우를 감안해
+        // 앞 3조각만 남긴다: /api/trade/fetch
+        const path = String(url).split('?')[0]
+            .replace(/^https?:\/\/[^/]+/, '');
+
+        const key = path.split('/').slice(0, 4).join('/');
+
+        if (seenApiPaths.has(key)) return;
+
+        seenApiPaths.add(key);
+
+        log('HOOK', `처리 대상 아닌 거래소 API: ${key}`
+            + ' (경로별 최초 1회만 남긴다)');
+
+    }
+
     // =========================
     // Response JSON Hook
     // =========================
@@ -1199,14 +1225,20 @@ Last Teleport: ${fmt(lastTeleport)}`;
                     const game = m[1] === 'trade2' ? 'POE2' : 'POE1';
                     const kind = m[2];
 
+                    // 형식을 구버전(`POE1 fetch 응답 N건`)과 일부러 다르게 뒀다.
+                    // 콘솔 한 줄만 봐도 어느 버전이 돌고 있는지 알 수 있어야 한다.
                     log('HOOK',
-                        `${game} ${kind} 응답 ${result?.result?.length ?? 0}건`, url);
+                        `${game} ${kind} 응답: ${result?.result?.length ?? 0}건`, url);
 
                     // search 가 먼저, fetch 가 나중이다 (fetch 가 search 의 id 목록을
                     // 써야 하므로). 그래서 여기서 기록해 두면 뒤따르는 fetch 에서
                     // 출처를 판별할 수 있다.
                     if (kind === 'search') recordSearchResults(result, game);
                     else processTradeResults(result, game);
+
+                } else if (url.includes('/api/')) {
+
+                    logUnhandledApi(url);
 
                 }
 

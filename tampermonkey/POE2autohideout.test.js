@@ -206,6 +206,11 @@ function makeTab(name, store, clock, src = SRC) {
         await res.json();
     };
 
+    // 임의의 URL/본문을 그대로 후킹에 흘려보낸다 (진단 로그 검증용).
+    tab.feedRaw = async (url, data) => {
+        await new Response(url, data).json();
+    };
+
     // 수동 검색(또는 페이지 최초 로드)이 먼저 받는 /search 응답.
     // 본문은 매물 id 문자열 배열이다 (fetch 응답의 객체 배열과 다르다).
     tab.feedSearch = async (ids, api = 'trade') => {
@@ -519,6 +524,27 @@ function section(title) {
 
     check('나중에 스크롤해도 이동 없음', P.clicks, []);
     check('P 무장 유지', P.armedText(), 'AUTO HO ON');
+
+    section('T16: 처리 대상 아닌 거래소 API 는 경로별 1회만 진단 로그를 남긴다');
+    // "search 로그가 없다" 의 원인이 (경로명이 다름) 인지 (fetch 를 안 씀) 인지
+    // 구분하는 유일한 단서다. 시끄러우면 사람이 꺼버리므로 중복은 남기지 않는다.
+    const storeD = makeSharedStore();
+    const clockD = makeClock();
+
+    const Dg = makeTab('Dg', storeD, clockD);
+
+    await Dg.feedRaw('https://poe.kakaogames.com/api/trade/query/Standard?x=1', {});
+    await Dg.feedRaw('https://poe.kakaogames.com/api/trade/query/Hardcore?x=2', {});
+    await Dg.feedRaw('https://poe.kakaogames.com/api/trade/data/stats', {});
+    await Dg.feedRaw('https://poe.kakaogames.com/static/thing.json', {});
+
+    const diag = Dg.logs.filter(([, m]) => m.includes('처리 대상 아닌 거래소 API'));
+
+    check('경로 2종만 남는다 (같은 경로 중복 제거)', diag.length, 2);
+    check('쿼리스트링/리그를 떼고 경로만 남긴다',
+          diag.some(([, m]) => m.includes('/api/trade/query')), true);
+    check('/api 가 아닌 요청은 남기지 않는다',
+          diag.some(([, m]) => m.includes('static')), false);
 
     section('A 탭 로그 전문 (형식 눈으로 확인용)');
     for (const [lvl, m] of A.logs) console.log(`  [${lvl}] ${m}`);

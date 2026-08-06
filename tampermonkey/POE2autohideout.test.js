@@ -34,6 +34,16 @@ function makeSharedStore() {
         // storage 이벤트는 값을 바꾼 탭에는 오지 않는다 — 그걸 그대로 재현한다.
         forTab: (tab) => ({
             getItem: (k) => (data.has(k) ? data.get(k) : null),
+            removeItem: (k) => {
+                writes++;
+                const oldValue = data.has(k) ? data.get(k) : null;
+                data.delete(k);
+                for (const t of tabs) {
+                    if (t === tab) continue;
+                    t.fire({ key: k, oldValue, newValue: null,
+                             storageArea: t.localStorage });
+                }
+            },
             setItem: (k, v) => {
                 writes++;
                 const oldValue = data.has(k) ? data.get(k) : null;
@@ -217,6 +227,32 @@ function makeTab(name, store, clock, src = SRC, opts = {}) {
         ensureSock().deliver(JSON.stringify({ result: token }));
     };
 
+    // 거래소가 보내는 whisper 요청의 응답 코드를 관찰하는 쪽.
+    const PerformanceObserver_ = class {
+        constructor(cb) { this.cb = cb; tab.perfObserver = this; }
+        observe() {}
+        disconnect() {}
+    };
+
+    // 은신처 버튼을 누른 뒤 거래소가 보내는 POST /api/trade/whisper 의 결과.
+    tab.whisper = (status, api = 'trade') => {
+        tab.perfObserver.cb({
+            getEntries: () => [{
+                name: `https://poe.kakaogames.com/api/${api}/whisper`,
+                responseStatus: status,
+            }],
+        });
+    };
+
+    // 응답 코드를 못 읽는 브라우저.
+    tab.whisperNoStatus = () => {
+        tab.perfObserver.cb({
+            getEntries: () => [{
+                name: 'https://poe.kakaogames.com/api/trade/whisper',
+            }],
+        });
+    };
+
     const MutationObserver = class {
         constructor(cb) { this.cb = cb; tab.observer = this; }
         observe() {}
@@ -228,14 +264,14 @@ function makeTab(name, store, clock, src = SRC, opts = {}) {
         'window', 'document', 'localStorage', 'console',
         'Response', 'MouseEvent', 'MutationObserver', 'CSS',
         'setTimeout', 'clearTimeout', 'GM_xmlhttpRequest', 'GM_info',
-        'WebSocket', 'EventTarget',
+        'WebSocket', 'EventTarget', 'PerformanceObserver',
         src);
 
     fn(window, document, tab.localStorage, console_,
        Response, MouseEvent, MutationObserver, { escape: (s) => s },
        clock.setTimeout, clock.clearTimeout,
        () => {}, { script: { version: 'test' } },
-       WebSocket_, EventTarget_);
+       WebSocket_, EventTarget_, PerformanceObserver_);
 
     // 생성 순서가 아니라 클래스명으로 찾는다. 오버레이에 노드가 늘어도 안 깨진다.
     const byClass = (c) => created.find((e) => e.className === c);
@@ -1117,6 +1153,129 @@ function section(title) {
     const [r2, b2] = Rz2.pos().map((v) => parseInt(v, 10));
 
     check('처음부터 화면 안', [r2 <= 800 - 216, b2 <= 600 - 120], [true, true]);
+
+    section('T38: whisper 가 404 면 이동하지 않은 것 — 되돌린다');
+    // 클릭이 나갔다고 이동한 게 아니다. 매물이 이미 팔렸으면 거래소가 404 를
+    // 준다. 그런데도 스위치가 꺼지고 쿨다운이 걸리면, 아무 일도 안 했는데
+    // 다음 매물까지 통째로 놓친다.
+    const storeWh = makeSharedStore();
+    const clockWh = makeClock();
+
+    const Wf = makeTab('Wf', storeWh, clockWh);
+    Wf.clickToggle();
+
+    const idGone = 'aa'.repeat(32);
+    Wf.addRow(idGone);
+    Wf.livePush(idGone);
+    await Wf.feed(idGone, new Date().toISOString());
+    clockWh.flush();
+
+    check('클릭은 나갔다', Wf.clicks, [idGone]);
+    check('일단 꺼진다 (낙관적)', Wf.armedText(), 'OFF');
+    check('쿨다운도 걸린다', typeof storeWh.dump()[LS_LAST_TELEPORT], 'string');
+
+    Wf.whisper(404);
+
+    check('404 면 다시 켜진다', Wf.armedText(), 'ON');
+    check('쿨다운도 되돌린다', storeWh.dump()[LS_LAST_TELEPORT], undefined);
+    check('실패 이유를 남긴다',
+          Wf.logs.some(([lvl, m]) =>
+              lvl === 'error' && m.includes('HTTP 404 로 거절')), true);
+
+    // 되돌렸으니 바로 다음 매물을 잡을 수 있어야 한다. 그게 되돌린 이유다.
+    const idNext = 'bb'.repeat(32);
+    Wf.addRow(idNext);
+    Wf.livePush(idNext);
+    await Wf.feed(idNext, new Date().toISOString());
+    clockWh.flush();
+
+    check('곧바로 다음 매물로 이동한다', Wf.clicks, [idGone, idNext]);
+
+    section('T39: whisper 가 200 이면 꺼진 채로 둔다');
+    const storeW2 = makeSharedStore();
+    const clockW2 = makeClock();
+
+    const Ok = makeTab('Ok', storeW2, clockW2);
+    Ok.clickToggle();
+
+    const idOk = 'cc'.repeat(32);
+    Ok.addRow(idOk);
+    Ok.livePush(idOk);
+    await Ok.feed(idOk, new Date().toISOString());
+    clockW2.flush();
+
+    Ok.whisper(200);
+
+    check('성공이면 꺼진 채 유지', Ok.armedText(), 'OFF');
+    check('쿨다운 유지', typeof storeW2.dump()[LS_LAST_TELEPORT], 'string');
+    check('확인 로그를 남긴다',
+          Ok.logs.some(([, m]) => m.includes('이동 확인: whisper HTTP 200')), true);
+
+    section('T40: 실패했어도 사용자가 그 사이 직접 껐으면 존중한다');
+    // 되돌리기가 사용자 조작을 덮으면 안 된다.
+    const storeW3 = makeSharedStore();
+    const clockW3 = makeClock();
+
+    const Rs = makeTab('Rs', storeW3, clockW3);
+    Rs.clickToggle();
+
+    const idRs = 'dd'.repeat(32);
+    Rs.addRow(idRs);
+    Rs.livePush(idRs);
+    await Rs.feed(idRs, new Date().toISOString());
+    clockW3.flush();
+
+    check('자동으로 꺼짐', Rs.armedText(), 'OFF');
+
+    Rs.clickToggle();                      // 사용자가 직접 다시 켬
+    Rs.clickToggle();                      // 그리고 다시 끔 — 의도적으로 꺼둔 상태
+    Rs.whisper(404);
+
+    check('사용자가 끈 상태를 되돌리지 않는다', Rs.armedText(), 'OFF');
+
+    section('T41: 한참 뒤에 온 whisper 는 우리 클릭의 결과가 아니다');
+    // 사용자가 직접 누른 귓속말까지 우리 클릭의 성패로 삼으면 안 된다.
+    const storeW4 = makeSharedStore();
+    const clockW4 = makeClock();
+
+    const Lt = makeTab('Lt', storeW4, clockW4);
+    Lt.clickToggle();
+
+    const idLt = 'ee'.repeat(32);
+    Lt.addRow(idLt);
+    Lt.livePush(idLt);
+    await Lt.feed(idLt, new Date().toISOString());
+    clockW4.flush();
+
+    // 확인 창(10초)을 넘긴 상황을 만든다.
+    const realNow = Date.now;
+    Date.now = () => realNow() + 20_000;
+
+    Lt.whisper(404);
+
+    Date.now = realNow;
+
+    check('창을 넘긴 응답은 되돌리지 않는다', Lt.armedText(), 'OFF');
+
+    section('T42: 응답 코드를 못 읽으면 예전 동작으로 남고 경고를 남긴다');
+    const storeW5 = makeSharedStore();
+    const clockW5 = makeClock();
+
+    const Ns = makeTab('Ns', storeW5, clockW5);
+    Ns.clickToggle();
+
+    const idNs = 'ff'.repeat(32);
+    Ns.addRow(idNs);
+    Ns.livePush(idNs);
+    await Ns.feed(idNs, new Date().toISOString());
+    clockW5.flush();
+
+    Ns.whisperNoStatus();
+
+    check('꺼진 채로 남는다 (낙관적 동작 유지)', Ns.armedText(), 'OFF');
+    check('확인 불가 경고를 남긴다',
+          Ns.logs.some(([lvl, m]) =>
+              lvl === 'warn' && m.includes('응답 코드를 읽을 수 없다')), true);
 
     section('A 탭 로그 전문 (형식 눈으로 확인용)');
     for (const [lvl, m] of A.logs) console.log(`  [${lvl}] ${m}`);

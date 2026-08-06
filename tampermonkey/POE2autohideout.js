@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name         POE1&2 Alert (WS → XHR → alert)
-// @version      2026-08-05-019
+// @version      2026-08-06-001
 // @description  POE1/POE2 live search alert & auto hideout
 // @match        https://poe.kakaogames.com/trade2/search/poe2/*/live
 // @match        https://poe.kakaogames.com/trade/search/*/live
@@ -69,6 +69,10 @@
 
     // usedItemIds 무한 증가 방지: 상한 초과 시 가장 오래된 항목부터 버린다.
     const MAX_USED_IDS = 1000;
+
+    // 클릭 후 이 시간 안에 오는 whisper 응답만 그 클릭의 결과로 본다.
+    // 사용자가 직접 누른 귓속말까지 우리 클릭의 성패로 오해하면 안 된다.
+    const TELEPORT_VERIFY_MS = 10_000;
 
     // hideout 버튼을 이 시간까지 못 찾으면 관찰을 포기한다.
     const HIDEOUT_WAIT_TIMEOUT_MS = 15_000;
@@ -191,6 +195,22 @@
         } catch (e) {
 
             reportLsFailure('쓰기', e);
+            return false;
+
+        }
+
+    }
+
+    function lsRemove(key) {
+
+        try {
+
+            localStorage.removeItem(key);
+            return true;
+
+        } catch (e) {
+
+            reportLsFailure('삭제', e);
             return false;
 
         }
@@ -942,12 +962,18 @@ text-align: right;
     //
     // reason 은 왜 상태가 바뀌었는지 한 줄에 함께 남기기 위한 것이다.
     // 자동 해제 / 버튼 클릭 / 다른 탭을 콘솔에서 구분할 수 있어야 한다.
+    // 모든 탭 스위치가 바뀐 횟수. 되돌리기가 "그 사이 아무도 손대지 않았는가" 를
+    // 판별하는 데 쓴다. 상태값만 보면 우리가 끈 것과 사용자가 끈 것을 구분할 수
+    // 없다 — 둘 다 그냥 OFF 다.
+    let armedChangeSeq = 0;
+
     function applyAutoHideout(state, reason) {
 
         log('UI', `모든 탭 자동이동 ${state ? 'ON' : 'OFF'}`
             + (reason ? ` — ${reason}` : ''));
 
         autoHideoutArmed = state;
+        armedChangeSeq++;
 
         // 끄면 대기 중이거나 예약된 텔레포트도 함께 취소한다.
         // 다른 탭이 껐을 때도 이 경로를 타므로 예약된 클릭이 확실히 취소된다.
@@ -1330,17 +1356,183 @@ text-align: right;
         log('HIDEOUT', `click 완료 id=${shortId(itemId)}`);
 
         // 실제로 클릭이 나간 시점만 텔레포트로 기록한다.
+        // 클릭이 나갔다는 것과 이동했다는 것은 다르다. 실제 이동은 그 뒤 거래소가
+        // 보내는 POST /api/trade/whisper 가 결정한다. 그게 404 면 매물이 이미
+        // 사라졌거나 토큰이 만료된 것이고, 우리는 제자리에 서 있다.
+        //
+        // 그래서 여기서는 "성공했다고 보고 되돌릴 준비를 해둔다". 낙관적으로
+        // 처리하는 이유는, 응답을 못 보는 환경(구형 브라우저)에서도 자동 해제가
+        // 동작해야 하기 때문이다 — 못 보면 계속 이동하는 쪽이 훨씬 위험하다.
+        const prevTeleportMs = getLastTeleportMs();
+
         lastTeleport = new Date();
         updateStatus('Teleported');
 
         // 다른 탭도 같은 쿨다운을 적용해야 한다.
         lsWrite(LS_LAST_TELEPORT, String(lastTeleport.getTime()));
 
-        // 이동에 성공했으면 여기서 멈춘다. 실패 경로에서는 해제하지 않는다
+        pendingTeleport = {
+            at: Date.now(),
+            id: itemId,
+            prevTeleportMs,
+            turnedOff: false
+        };
+
+        // 이동에 성공했으면 여기서 멈춘다. 실패 경로에서는 끄지 않는다
         // (클릭이 안 나갔으므로 이동도 없었고, 다음 매물에서 다시 시도해야 한다).
         if (DISARM_AFTER_TELEPORT && autoHideoutArmed) {
 
-            setAutoHideout(false, `이동 1회 완료 후 자동 해제 id=${shortId(itemId)}`);
+            setAutoHideout(false, `이동 1회 완료 후 자동으로 끔 id=${shortId(itemId)}`);
+
+            pendingTeleport.turnedOff = true;
+
+        }
+
+        // 이 시점 이후의 스위치 변경은 전부 사용자(또는 다른 탭)의 뜻이다.
+        pendingTeleport.seq = armedChangeSeq;
+
+    }
+
+
+    /*********************************************************
+     * 이동 성패 확인 (whisper 응답)
+     *
+     * 은신처 버튼을 누르면 거래소가 POST /api/trade/whisper 를 보낸다.
+     * 그게 404 면 이동은 일어나지 않았다 (매물이 이미 팔렸거나 토큰 만료).
+     * 그런데도 스위치가 꺼지고 쿨다운까지 걸리면, 자리를 비운 사이 다음 매물을
+     * 통째로 놓친다 — 아무 일도 안 했는데 벌만 받는 셈이다.
+     *
+     * 응답을 보는 방법으로 PerformanceObserver 를 쓴다. fetch 나 XHR 를 또
+     * 갈아끼우지 않고 읽기만 하면 되고, 사이트가 어느 쪽을 쓰든 잡힌다.
+     * responseStatus 는 same-origin 에서만 노출되는데 여기가 그렇다.
+     *
+     * 못 쓰는 환경이면 예전 동작(낙관적 해제)으로 남는다. 경고는 한 번 남긴다.
+     *********************************************************/
+    const WHISPER_RE = /\/api\/trade2?\/whisper/;
+
+    // 클릭은 나갔고 아직 성패를 모르는 이동. 되돌리는 데 필요한 것만 담는다.
+    let pendingTeleport = null;
+
+    function onTeleportRejected(status) {
+
+        const p = pendingTeleport;
+
+        pendingTeleport = null;
+
+        fail('HIDEOUT',
+             `이동 실패: 거래소가 HTTP ${status} 로 거절했다 id=${shortId(p.id)}`
+             + ' — 매물이 이미 사라졌거나 토큰이 만료됐다. 되돌린다.');
+
+        // 쿨다운을 원래대로. 이동하지 않았으니 30초를 벌 이유가 없다.
+        if (p.prevTeleportMs === null) {
+
+            lastTeleport = null;
+            lsRemove(LS_LAST_TELEPORT);
+
+        } else {
+
+            lastTeleport = new Date(p.prevTeleportMs);
+            lsWrite(LS_LAST_TELEPORT, String(p.prevTeleportMs));
+
+        }
+
+        // 자동으로 껐던 것만, 그리고 그 뒤로 아무도 손대지 않았을 때만 되켠다.
+        // 사용자가 그 사이 껐다 켰다 했다면 그쪽이 최신 의사다.
+        if (p.turnedOff && armedChangeSeq === p.seq && !autoHideoutArmed) {
+
+            setAutoHideout(true, `이동 실패(HTTP ${status}) — 자동으로 끈 것을 되돌림`);
+
+        }
+
+        updateStatus(`HO 실패 ${status}`);
+
+    }
+
+    let whisperStatusMissingReported = false;
+
+    function onWhisperEntry(entry) {
+
+        if (!pendingTeleport) return;
+
+        // 우리 클릭과 무관한(사용자가 직접 보낸) 귓속말까지 성패로 삼으면 안 된다.
+        if (Date.now() - pendingTeleport.at > TELEPORT_VERIFY_MS) {
+
+            pendingTeleport = null;
+            return;
+
+        }
+
+        const status = entry.responseStatus;
+
+        if (typeof status !== 'number' || status === 0) {
+
+            if (!whisperStatusMissingReported) {
+
+                whisperStatusMissingReported = true;
+
+                warn('HIDEOUT', 'whisper 응답 코드를 읽을 수 없다'
+                     + ' — 이동 성패를 확인하지 못한다 (이후 동일 경고는 생략)');
+
+            }
+
+            pendingTeleport = null;
+            return;
+
+        }
+
+        if (status >= 400) {
+
+            onTeleportRejected(status);
+            return;
+
+        }
+
+        log('HIDEOUT', `이동 확인: whisper HTTP ${status}`
+            + ` id=${shortId(pendingTeleport.id)}`);
+
+        pendingTeleport = null;
+
+    }
+
+    function installWhisperWatch() {
+
+        if (typeof PerformanceObserver !== 'function') {
+
+            warn('INIT', 'PerformanceObserver 가 없어 이동 성패를 확인할 수 없다'
+                 + ' — 404 로 이동에 실패해도 자동으로 꺼진 채로 남는다.');
+
+            return;
+
+        }
+
+        try {
+
+            const observer = new PerformanceObserver((list) => {
+
+                try {
+
+                    for (const entry of list.getEntries()) {
+
+                        if (WHISPER_RE.test(entry.name)) onWhisperEntry(entry);
+
+                    }
+
+                } catch (e) {
+
+                    fail('HIDEOUT', 'whisper 응답 처리 중 예외', e);
+
+                }
+
+            });
+
+            observer.observe({ type: 'resource', buffered: true });
+
+            log('INIT', 'whisper 응답 관찰 시작');
+
+        } catch (e) {
+
+            fail('INIT', 'whisper 응답 관찰을 걸지 못했다'
+                 + ' — 이동 성패를 확인하지 못한다', e);
 
         }
 
@@ -2283,10 +2475,21 @@ text-align: right;
             // 표시도 함께 맞춘다. 쿨다운은 getLastTeleportMs 가 저장소를 직접
             // 보므로 이 대입 없이도 동작하지만, 오버레이의 Last Teleport 가
             // 자기 탭 이동만 보여주면 왜 막혔는지 알 수 없다.
-            if (!lastTeleport || ms > lastTeleport.getTime()) {
+            const before = lastTeleport ? lastTeleport.getTime() : null;
 
-                lastTeleport = new Date(ms);
-                updateStatus();
+            if (before === ms) return;
+
+            lastTeleport = new Date(ms);
+            updateStatus();
+
+            // 뒤로 가는 경우도 받아야 한다. 다른 탭이 404 로 이동에 실패해
+            // 쿨다운을 되돌렸는데 여기만 30초를 계속 세고 있으면, 그 사이 매물을
+            // 통째로 놓친다.
+            if (before !== null && ms < before) {
+
+                log('SYNC', '다른 탭이 이동에 실패해 쿨다운을 되돌렸다');
+
+            } else {
 
                 log('SYNC', `다른 탭이 이동함 — 쿨다운 ${COOLDOWN_MS / 1000}s 공유`);
 
@@ -2311,6 +2514,8 @@ text-align: right;
         // 응답 후킹보다 먼저 걸어도 되지만, 순서를 이 쪽으로 둔 이유는 없다.
         // 둘 다 사이트가 첫 요청을 보내기 전에 설치되면 된다.
         installWebSocketHook();
+
+        installWhisperWatch();
 
         checkServerAliveOnce();
 
